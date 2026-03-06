@@ -21,8 +21,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/places/photo", async (req: Request, res: Response) => {
+    const reference = req.query.reference as string;
+    const maxwidth = (req.query.maxwidth as string) || "400";
+
+    if (!reference) {
+      res.status(400).json({ error: "reference is required" });
+      return;
+    }
+
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      res.status(500).json({ error: "API key not configured" });
+      return;
+    }
+
+    try {
+      const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${maxwidth}&photo_reference=${encodeURIComponent(reference)}&key=${apiKey}`;
+      const photoRes = await fetch(url);
+      const buffer = await photoRes.arrayBuffer();
+      const contentType = photoRes.headers.get("content-type") || "image/jpeg";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(Buffer.from(buffer));
+    } catch (err) {
+      console.error("Photo proxy error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   const searchBodySchema = z.object({
-    city: z.enum(["Franca", "Ribeirão Preto"]),
+    city: z.enum(["Franca", "Ribeirão Preto"]).optional(),
     query: z.string().optional(),
     lat: z.number().optional(),
     lng: z.number().optional(),
@@ -43,13 +72,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (lat !== undefined && lng !== undefined) {
         places = await searchPlacesNearby(lat, lng, radiusMeters ?? 5000, query);
       } else {
-        places = await searchPlacesByText(city, query);
+        places = await searchPlacesByText(city ?? "Franca", query);
       }
 
+      const cityName = city ?? "Franca";
       for (const p of places) {
         await upsertPlace({
           place_id: p.place_id,
-          city,
+          city: cityName,
           lat: String(p.location.lat),
           lng: String(p.location.lng),
         }).catch(() => {});
