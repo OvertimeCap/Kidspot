@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
@@ -10,6 +10,7 @@ import {
   type Review,
   type Favorite,
 } from "@shared/schema";
+import type { KidFlags } from "./kid-score";
 
 export async function upsertPlace(place: InsertPlace): Promise<PlaceKidspot> {
   const [row] = await db
@@ -70,4 +71,39 @@ export async function getFavoritesForUser(userKey: string): Promise<Favorite[]> 
     where: eq(favorites.user_key, userKey),
     orderBy: (f, { desc }) => [desc(f.created_at)],
   });
+}
+
+/**
+ * getAggregatedKidFlagsForPlaces
+ *
+ * Batch-queries reviews for a list of place IDs and returns a map of
+ * place_id → KidFlags where a flag is true if ANY review reported it.
+ * Only the three signals used by KidScore are returned.
+ */
+export async function getAggregatedKidFlagsForPlaces(
+  placeIds: string[],
+): Promise<Map<string, KidFlags>> {
+  const result = new Map<string, KidFlags>();
+  if (placeIds.length === 0) return result;
+
+  const rows = await db.query.reviews.findMany({
+    where: inArray(reviews.place_id, placeIds),
+    columns: { place_id: true, kid_flags: true },
+  });
+
+  for (const row of rows) {
+    const flags = row.kid_flags as {
+      espaco_kids?: boolean;
+      trocador?: boolean;
+      cadeirao?: boolean;
+    };
+    const existing = result.get(row.place_id) ?? {};
+    result.set(row.place_id, {
+      espaco_kids: existing.espaco_kids || flags.espaco_kids,
+      trocador: existing.trocador || flags.trocador,
+      cadeirao: existing.cadeirao || flags.cadeirao,
+    });
+  }
+
+  return result;
 }

@@ -2,8 +2,8 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import { z } from "zod";
 import { pool } from "./db";
-import { searchPlacesByText, searchPlacesNearby, getPlaceDetails } from "./google-places";
-import { upsertPlace, createReview, getReviewsForPlace, toggleFavorite, getFavoritesForUser } from "./storage";
+import { searchPlaces, getPlaceDetails } from "./google-places";
+import { createReview, getReviewsForPlace, toggleFavorite, getFavoritesForUser } from "./storage";
 import { insertReviewSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -50,12 +50,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * POST /api/places/search
+   *
+   * Discovers kid-friendly places near a coordinate using the Google Places
+   * Nearby Search API, scores each result with a KidScore, and returns them
+   * sorted by the caller's preferred strategy.
+   *
+   * Request body:
+   * {
+   *   "latitude": -23.5505,        // required – search origin latitude
+   *   "longitude": -46.6333,       // required – search origin longitude
+   *   "radius": 5000,              // metres, max 10 000
+   *   "establishmentType": "playground", // playground | park | amusement_center |
+   *                                       // restaurant | cafe | shopping_mall
+   *   "openNow": true,             // optional – filter to currently open places
+   *   "query": "espaço kids",      // optional – keyword refinement
+   *   "sortBy": "kidScore"         // optional – kidScore | distance | rating
+   * }
+   *
+   * Response:
+   * {
+   *   "places": [
+   *     {
+   *       "place_id": "ChIJ...",
+   *       "name": "Parque Ibirapuera",
+   *       "address": "Av. Pedro Álvares Cabral, São Paulo",
+   *       "location": { "lat": -23.5872, "lng": -46.6576 },
+   *       "rating": 4.7,
+   *       "user_ratings_total": 82340,
+   *       "types": ["park", "point_of_interest"],
+   *       "opening_hours": { "open_now": true },
+   *       "photos": [{ "photo_reference": "ATtYBwJ..." }],
+   *       "kid_score": 60,
+   *       "kid_score_breakdown": {
+   *         "type_bonus": 0,
+   *         "espaco_kids_bonus": 25,
+   *         "trocador_bonus": 20,
+   *         "cadeirao_bonus": 0,
+   *         "rating_bonus": 10,
+   *         "proximity_bonus": 5
+   *       },
+   *       "distance_meters": 3821
+   *     }
+   *   ]
+   * }
+   */
   const searchBodySchema = z.object({
-    city: z.enum(["Franca", "Ribeirão Preto"]).optional(),
+    latitude: z.number(),
+    longitude: z.number(),
+    radius: z.number().positive().max(10_000).default(5_000),
+    establishmentType: z.enum([
+      "playground",
+      "park",
+      "amusement_center",
+      "restaurant",
+      "cafe",
+      "shopping_mall",
+    ]),
+    openNow: z.boolean().optional(),
     query: z.string().optional(),
-    lat: z.number().optional(),
-    lng: z.number().optional(),
-    radiusMeters: z.number().optional(),
+    sortBy: z.enum(["kidScore", "distance", "rating"]).default("kidScore"),
   });
 
   app.post("/api/places/search", async (req: Request, res: Response) => {
@@ -65,26 +120,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
 
-    const { city, query, lat, lng, radiusMeters } = parsed.data;
-
     try {
-      let places;
-      if (lat !== undefined && lng !== undefined) {
-        places = await searchPlacesNearby(lat, lng, radiusMeters ?? 5000, query);
-      } else {
-        places = await searchPlacesByText(city ?? "Franca", query);
-      }
-
-      const cityName = city ?? "Franca";
-      for (const p of places) {
-        await upsertPlace({
-          place_id: p.place_id,
-          city: cityName,
-          lat: String(p.location.lat),
-          lng: String(p.location.lng),
-        }).catch(() => {});
-      }
-
+      const places = await searchPlaces(parsed.data);
       res.json({ places });
     } catch (err) {
       console.error("Places search error:", err);

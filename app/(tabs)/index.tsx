@@ -20,7 +20,7 @@ import {
   haversineKm,
   formatDistance,
   getPhotoUrl,
-  type MinimalPlace,
+  type PlaceWithScore,
 } from "@/lib/api";
 
 type UserLocation = { lat: number; lng: number };
@@ -31,7 +31,7 @@ function PlaceCard({
   place,
   userLocation,
 }: {
-  place: MinimalPlace;
+  place: PlaceWithScore;
   userLocation: UserLocation | null;
 }) {
   const photoUrl =
@@ -101,7 +101,7 @@ function PlaceCard({
         </View>
 
         <Text style={styles.address} numberOfLines={1}>
-          {place.formatted_address}
+          {place.address}
         </Text>
       </View>
     </Pressable>
@@ -110,7 +110,7 @@ function PlaceCard({
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const [results, setResults] = useState<MinimalPlace[]>([]);
+  const [results, setResults] = useState<PlaceWithScore[]>([]);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,16 +158,34 @@ export default function HomeScreen() {
       });
       const { latitude, longitude } = loc.coords;
       setUserLocation({ lat: latitude, lng: longitude });
-      await doSearch({ lat: latitude, lng: longitude, radiusMeters: 5000 });
+      await doSearch({
+        latitude,
+        longitude,
+        radius: 5000,
+        establishmentType: "park",
+        sortBy: "kidScore",
+      });
     } catch {
       setError("Não foi possível obter sua localização.");
       setLoading(false);
     }
   }, [doSearch]);
 
+  const CITY_COORDS: Record<City, { lat: number; lng: number }> = {
+    Franca: { lat: -20.5386, lng: -47.4009 },
+    "Ribeirão Preto": { lat: -21.1704, lng: -47.8102 },
+  };
+
   const handleCitySearch = useCallback(
     (city: City) => {
-      doSearch({ city });
+      const coords = CITY_COORDS[city];
+      doSearch({
+        latitude: coords.lat,
+        longitude: coords.lng,
+        radius: 8000,
+        establishmentType: "park",
+        sortBy: "kidScore",
+      });
     },
     [doSearch],
   );

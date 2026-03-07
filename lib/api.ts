@@ -43,12 +43,48 @@ export type FavoriteRow = {
   created_at: string;
 };
 
+export type EstablishmentType =
+  | "playground"
+  | "park"
+  | "amusement_center"
+  | "restaurant"
+  | "cafe"
+  | "shopping_mall";
+
+export type SortBy = "kidScore" | "distance" | "rating";
+
+export type KidScoreBreakdown = {
+  type_bonus: number;
+  espaco_kids_bonus: number;
+  trocador_bonus: number;
+  cadeirao_bonus: number;
+  rating_bonus: number;
+  proximity_bonus: number;
+};
+
 export type SearchParams = {
-  city?: "Franca" | "Ribeirão Preto";
+  latitude: number;
+  longitude: number;
+  radius?: number;
+  establishmentType: EstablishmentType;
+  openNow?: boolean;
   query?: string;
-  lat?: number;
-  lng?: number;
-  radiusMeters?: number;
+  sortBy?: SortBy;
+};
+
+export type PlaceWithScore = {
+  place_id: string;
+  name: string;
+  address: string;
+  location: { lat: number; lng: number };
+  rating?: number;
+  user_ratings_total?: number;
+  types: string[];
+  opening_hours?: { open_now?: boolean; weekday_text?: string[] };
+  photos?: { photo_reference: string }[];
+  kid_score: number;
+  kid_score_breakdown: KidScoreBreakdown;
+  distance_meters?: number;
 };
 
 export function getPhotoUrl(photoReference: string, maxwidth = 400): string {
@@ -59,7 +95,7 @@ export function getPhotoUrl(photoReference: string, maxwidth = 400): string {
   return url.toString();
 }
 
-export async function searchPlaces(params: SearchParams): Promise<MinimalPlace[]> {
+export async function searchPlaces(params: SearchParams): Promise<PlaceWithScore[]> {
   const res = await apiRequest("POST", "/api/places/search", params);
   const data = await res.json();
   return data.places ?? [];

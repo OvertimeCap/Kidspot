@@ -1,3 +1,13 @@
+import {
+  filterOpenNow,
+  calculateKidScore,
+  sortResults,
+  type EstablishmentType,
+  type SortBy,
+  type PlaceWithScore,
+} from "./kid-score";
+import { getAggregatedKidFlagsForPlaces, upsertPlace } from "./storage";
+
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
 if (!GOOGLE_PLACES_API_KEY) {
@@ -194,6 +204,160 @@ export async function searchPlacesNearby(
 
   return deduplicateAndSort(all);
 }
+
+// ─── New structured search API ────────────────────────────────────────────────
+
+export type FetchGooglePlacesParams = {
+  latitude: number;
+  longitude: number;
+  radius: number;
+  type: EstablishmentType;
+  query?: string;
+};
+
+type RawGooglePlace = {
+  place_id: string;
+  name: string;
+  formatted_address?: string;
+  vicinity?: string;
+  geometry?: { location: { lat: number; lng: number } };
+  types?: string[];
+  rating?: number;
+  user_ratings_total?: number;
+  opening_hours?: { open_now?: boolean };
+  photos?: { photo_reference: string }[];
+};
+
+/**
+ * fetchGooglePlaces
+ *
+ * Single-strategy fetch from the Google Places Nearby Search API.
+ * Radius is clamped to 10 000 m (Google's limit for nearbysearch with rankby=prominence).
+ */
+export async function fetchGooglePlaces(
+  params: FetchGooglePlacesParams,
+): Promise<
+  Array<{
+    place_id: string;
+    name: string;
+    address: string;
+    location: { lat: number; lng: number };
+    types: string[];
+    rating?: number;
+    user_ratings_total?: number;
+    opening_hours?: { open_now?: boolean };
+    photos?: { photo_reference: string }[];
+  }>
+> {
+  if (!GOOGLE_PLACES_API_KEY) return [];
+
+  const clampedRadius = Math.min(params.radius, 10_000);
+
+  const qs = new URLSearchParams({
+    location: `${params.latitude},${params.longitude}`,
+    radius: String(clampedRadius),
+    type: params.type,
+    key: GOOGLE_PLACES_API_KEY,
+    language: "pt-BR",
+  });
+
+  if (params.query) qs.set("keyword", params.query);
+
+  const res = await fetch(`${PLACES_BASE}/nearbysearch/json?${qs.toString()}`);
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as {
+    results: RawGooglePlace[];
+    status: string;
+  };
+
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return [];
+
+  return (data.results ?? []).map((r) => ({
+    place_id: r.place_id,
+    name: r.name,
+    address: r.formatted_address ?? r.vicinity ?? "",
+    location: r.geometry?.location ?? { lat: 0, lng: 0 },
+    types: r.types ?? [],
+    rating: r.rating,
+    user_ratings_total: r.user_ratings_total,
+    opening_hours: r.opening_hours,
+    photos: r.photos?.slice(0, 1).map((p) => ({ photo_reference: p.photo_reference })),
+  }));
+}
+
+export type SearchPlacesParams = {
+  latitude: number;
+  longitude: number;
+  radius: number;
+  establishmentType: EstablishmentType;
+  openNow?: boolean;
+  query?: string;
+  sortBy?: SortBy;
+};
+
+/**
+ * searchPlaces
+ *
+ * Full orchestrated search pipeline:
+ *   fetchGooglePlaces → filterOpenNow? → DB kid-flags enrichment
+ *   → calculateKidScore → sortResults
+ *
+ * Also upserts discovered places into the local DB for future enrichment.
+ */
+export async function searchPlaces(
+  params: SearchPlacesParams,
+): Promise<PlaceWithScore[]> {
+  const { latitude, longitude, radius, establishmentType, openNow, query, sortBy = "kidScore" } =
+    params;
+
+  // 1. Fetch from Google Places
+  let raw = await fetchGooglePlaces({
+    latitude,
+    longitude,
+    radius,
+    type: establishmentType,
+    query,
+  });
+
+  // 2. Deduplicate
+  const seen = new Set<string>();
+  raw = raw.filter((p) => {
+    if (seen.has(p.place_id)) return false;
+    seen.add(p.place_id);
+    return true;
+  });
+
+  // 3. Optional openNow filter
+  if (openNow) {
+    raw = filterOpenNow(raw);
+  }
+
+  // 4. Persist new places to local DB (non-blocking, failures are silent)
+  await Promise.allSettled(
+    raw.map((p) =>
+      upsertPlace({
+        place_id: p.place_id,
+        city: "unknown",
+        lat: String(p.location.lat),
+        lng: String(p.location.lng),
+      }),
+    ),
+  );
+
+  // 5. Batch-fetch community kid-flags from our reviews DB
+  const kidFlagsMap = await getAggregatedKidFlagsForPlaces(raw.map((p) => p.place_id));
+
+  // 6. Score each place
+  const scored = raw.map((p) =>
+    calculateKidScore(p, latitude, longitude, kidFlagsMap.get(p.place_id) ?? {}),
+  );
+
+  // 7. Sort and return
+  return sortResults(scored, sortBy);
+}
+
+// ─── Legacy API (kept for backward compatibility) ─────────────────────────────
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
   const fields = [
