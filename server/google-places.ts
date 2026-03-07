@@ -70,8 +70,8 @@ function deduplicateAndSort(places: MinimalPlace[]): MinimalPlace[] {
       unique.push(p);
     }
   }
-  // Sort by rating descending; no-rating entries go to the end
-  unique.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+  // Sort by number of ratings descending; no-rating entries go to the end
+  unique.sort((a, b) => (b.user_ratings_total ?? 0) - (a.user_ratings_total ?? 0));
   return unique;
 }
 
