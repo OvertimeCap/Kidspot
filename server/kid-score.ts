@@ -3,16 +3,18 @@
  *
  * Architecture note:
  * ─────────────────
- * Google Places has no kid-friendly signal, so we layer our own scoring on top.
- * Each place receives a KidScore (0-100) computed from four signal groups:
+ * Three progressive filter layers remove irrelevant results before scoring:
  *
- *   1. Place type  — playground / amusement_center are inherently kid-oriented (+40)
- *   2. Community flags — kid_flags crowd-sourced via KidSpot reviews stored in our DB
- *                        (espaco_kids +25, trocador +20, cadeirao +15)
- *   3. Quality     — Google rating ≥ 4.0 (+10)
- *   4. Proximity   — within 1 km of the search origin (+10)
+ *   Layer 1 – Allowed types  : keep only recognised kid-relevant Google Place types.
+ *   Layer 2 – Kid evidence   : at least one positive keyword must appear in the name.
+ *                              Inherently-kid types (playground, amusement_center, zoo)
+ *                              are granted an automatic pass.
+ *   Layer 3 – Quality gate   : rating ≥ 4.2, ≥ 20 reviews, at least one photo.
+ *   Blocklist                : hard-exclude places whose names contain adult-business
+ *                              keywords (applied independently of the layers).
  *
- * The score is advisory; clients may sort by kidScore, distance, or rating.
+ * Passing results are scored and sorted with a 3-key priority:
+ *   user_ratings_total DESC → rating DESC → distance ASC
  */
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,7 +27,11 @@ export type EstablishmentType =
   | "amusement_center"
   | "restaurant"
   | "cafe"
-  | "shopping_mall";
+  | "shopping_mall"
+  | "zoo"
+  | "tourist_attraction"
+  | "sports_club"
+  | "community_center";
 
 export type KidFlags = {
   espaco_kids?: boolean;
@@ -57,6 +63,108 @@ export type PlaceWithScore = {
   distance_meters?: number;
 };
 
+// ─── Filter constants ─────────────────────────────────────────────────────────
+
+/**
+ * Layer 1 – The only Google Places types KidSpot considers relevant.
+ * Any place whose type list has NO intersection with this set is discarded.
+ */
+export const ALLOWED_TYPES = new Set([
+  "playground",
+  "amusement_center",
+  "park",
+  "zoo",
+  "tourist_attraction",
+  "restaurant",
+  "cafe",
+  "shopping_mall",
+  "sports_club",
+  "community_center",
+  // common Google synonym kept for coverage
+  "amusement_park",
+]);
+
+/**
+ * Layer 2 – Positive kid-evidence keywords.
+ * Checked case-insensitively against the place name.
+ * Types in KID_AUTO_PASS skip this check entirely.
+ */
+export const KID_KEYWORDS = [
+  "kids",
+  "kid",
+  "kids area",
+  "kids club",
+  "infantil",
+  "criança",
+  "crianças",
+  "family",
+  "family friendly",
+  "playground",
+  "brinquedoteca",
+  "parquinho",
+  "recreação",
+  "recreacao",
+  "espaço kids",
+  "espaco kids",
+  "baby",
+  "menu infantil",
+  "cadeirão",
+  "cadeirao",
+  "trocador",
+  "parque",
+  "jardim",
+  "zoo",
+  "zoológico",
+  "zoologico",
+];
+
+/**
+ * Types that automatically satisfy Layer 2 (kid nature is inherent).
+ */
+export const KID_AUTO_PASS_TYPES = new Set([
+  "playground",
+  "amusement_center",
+  "amusement_park",
+  "zoo",
+  "community_center",
+  "sports_club",
+]);
+
+/**
+ * Blocklist – places whose names contain any of these words are always excluded,
+ * regardless of type or score.
+ */
+export const BLOCK_KEYWORDS = [
+  "advocacia",
+  "advocaticia",
+  "contabilidade",
+  "contabil",
+  "cartório",
+  "cartorio",
+  "oficina",
+  "consultoria",
+  "transportadora",
+  "indústria",
+  "industria",
+  "fábrica",
+  "fabrica",
+  "depósito",
+  "deposito",
+  "material elétrico",
+  "material eletrico",
+  "clínica",
+  "clinica",
+  "hospital",
+  "farmácia",
+  "farmacia",
+  "posto",
+  "combustível",
+  "combustivel",
+  "igreja",
+  "condomínio",
+  "condominio",
+];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -78,10 +186,90 @@ export function haversineMeters(
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// ─── Core functions ───────────────────────────────────────────────────────────
+function normalise(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function containsAny(text: string, keywords: string[]): boolean {
+  const n = normalise(text);
+  return keywords.some((kw) => n.includes(normalise(kw)));
+}
+
+// ─── Filter layers ────────────────────────────────────────────────────────────
+
+type Filterable = {
+  types: string[];
+  name: string;
+  rating?: number;
+  user_ratings_total?: number;
+  photos?: { photo_reference: string }[];
+};
 
 /**
- * filterOpenNow – removes places whose opening_hours.open_now is not true.
+ * Layer 1 – Only places with at least one allowed type pass.
+ */
+export function filterByAllowedTypes<T extends Filterable>(places: T[]): T[] {
+  return places.filter((p) => p.types.some((t) => ALLOWED_TYPES.has(t)));
+}
+
+/**
+ * Blocklist – Discard places whose name matches any block keyword.
+ * Applied independently of the layer order.
+ */
+export function filterByBlocklist<T extends Filterable>(places: T[]): T[] {
+  return places.filter((p) => !containsAny(p.name, BLOCK_KEYWORDS));
+}
+
+/**
+ * Layer 2 – Kid evidence.
+ * A place passes if:
+ *   (a) one of its types is in KID_AUTO_PASS_TYPES, OR
+ *   (b) its name contains at least one KID_KEYWORD.
+ */
+export function filterByKidEvidence<T extends Filterable>(places: T[]): T[] {
+  return places.filter(
+    (p) =>
+      p.types.some((t) => KID_AUTO_PASS_TYPES.has(t)) ||
+      containsAny(p.name, KID_KEYWORDS),
+  );
+}
+
+/**
+ * Layer 3 – Quality gate.
+ * Requires rating ≥ 4.2, ≥ 20 ratings, and at least one photo.
+ */
+export function filterByQuality<T extends Filterable>(places: T[]): T[] {
+  return places.filter(
+    (p) =>
+      (p.rating ?? 0) >= 4.2 &&
+      (p.user_ratings_total ?? 0) >= 20 &&
+      (p.photos?.length ?? 0) > 0,
+  );
+}
+
+/**
+ * applyKidFilters – runs all four checks in order and returns the survivors.
+ *
+ * Order:
+ *   Blocklist → Layer 1 (allowed types) → Layer 2 (kid evidence) → Layer 3 (quality)
+ */
+export function applyKidFilters<T extends Filterable>(places: T[]): T[] {
+  return filterByQuality(
+    filterByKidEvidence(
+      filterByAllowedTypes(
+        filterByBlocklist(places),
+      ),
+    ),
+  );
+}
+
+// ─── Open-now filter ──────────────────────────────────────────────────────────
+
+/**
+ * filterOpenNow – removes places whose opening_hours.open_now is explicitly false.
  * Places with no opening_hours data are kept (we cannot confirm they are closed).
  */
 export function filterOpenNow<T extends { opening_hours?: { open_now?: boolean } }>(
@@ -91,6 +279,8 @@ export function filterOpenNow<T extends { opening_hours?: { open_now?: boolean }
     (p) => p.opening_hours == null || p.opening_hours.open_now !== false,
   );
 }
+
+// ─── KidScore calculation ─────────────────────────────────────────────────────
 
 /**
  * calculateKidScore – assigns a score and full breakdown to a single place.
@@ -126,8 +316,8 @@ export function calculateKidScore(
   };
 
   // 1. Type bonus (+40 for playground/amusement_center)
-  const kidTypes = new Set(["playground", "amusement_center"]);
-  if (place.types.some((t) => kidTypes.has(t))) {
+  const premiumKidTypes = new Set(["playground", "amusement_center", "amusement_park", "zoo"]);
+  if (place.types.some((t) => premiumKidTypes.has(t))) {
     breakdown.type_bonus = 40;
   }
 
@@ -136,8 +326,8 @@ export function calculateKidScore(
   if (kidFlags.trocador) breakdown.trocador_bonus = 20;
   if (kidFlags.cadeirao) breakdown.cadeirao_bonus = 15;
 
-  // 3. Quality bonus (+10 for rating ≥ 4.0 with at least 5 reviews)
-  if ((place.rating ?? 0) >= 4.0 && (place.user_ratings_total ?? 0) >= 5) {
+  // 3. Quality bonus (+10 for rating ≥ 4.2 with at least 20 reviews)
+  if ((place.rating ?? 0) >= 4.2 && (place.user_ratings_total ?? 0) >= 20) {
     breakdown.rating_bonus = 10;
   }
 
@@ -168,26 +358,54 @@ export function calculateKidScore(
   };
 }
 
+// ─── Sorting ──────────────────────────────────────────────────────────────────
+
 /**
- * sortResults – orders a list of scored places by the chosen strategy.
+ * sortResults – orders a list of scored places.
  *
- *   kidScore  – highest score first (default)
- *   distance  – nearest first
- *   rating    – highest Google rating first
+ * All strategies use a 3-key tiebreaker:
+ *   user_ratings_total DESC → rating DESC → distance ASC
+ *
+ * Primary key per strategy:
+ *   kidScore  – kid_score DESC, then tiebreaker
+ *   rating    – user_ratings_total DESC, then rating DESC, then distance ASC
+ *   distance  – distance ASC, then rating DESC, then user_ratings_total DESC
  */
 export function sortResults(places: PlaceWithScore[], sortBy: SortBy): PlaceWithScore[] {
   const copy = [...places];
+
+  function byPopularity(a: PlaceWithScore, b: PlaceWithScore): number {
+    const totalDiff = (b.user_ratings_total ?? 0) - (a.user_ratings_total ?? 0);
+    if (totalDiff !== 0) return totalDiff;
+    const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
+    if (ratingDiff !== 0) return ratingDiff;
+    return (a.distance_meters ?? Infinity) - (b.distance_meters ?? Infinity);
+  }
+
   switch (sortBy) {
     case "distance":
-      copy.sort((a, b) => (a.distance_meters ?? Infinity) - (b.distance_meters ?? Infinity));
+      copy.sort((a, b) => {
+        const distDiff = (a.distance_meters ?? Infinity) - (b.distance_meters ?? Infinity);
+        if (distDiff !== 0) return distDiff;
+        const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
+        if (ratingDiff !== 0) return ratingDiff;
+        return (b.user_ratings_total ?? 0) - (a.user_ratings_total ?? 0);
+      });
       break;
+
     case "rating":
-      copy.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+      copy.sort(byPopularity);
       break;
+
     case "kidScore":
     default:
-      copy.sort((a, b) => b.kid_score - a.kid_score);
+      copy.sort((a, b) => {
+        const scoreDiff = b.kid_score - a.kid_score;
+        if (scoreDiff !== 0) return scoreDiff;
+        return byPopularity(a, b);
+      });
       break;
   }
+
   return copy;
 }

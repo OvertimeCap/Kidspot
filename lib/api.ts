@@ -49,7 +49,11 @@ export type EstablishmentType =
   | "amusement_center"
   | "restaurant"
   | "cafe"
-  | "shopping_mall";
+  | "shopping_mall"
+  | "zoo"
+  | "tourist_attraction"
+  | "sports_club"
+  | "community_center";
 
 export type SortBy = "kidScore" | "distance" | "rating";
 

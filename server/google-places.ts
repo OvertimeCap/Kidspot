@@ -1,5 +1,6 @@
 import {
   filterOpenNow,
+  applyKidFilters,
   calculateKidScore,
   sortResults,
   type EstablishmentType,
@@ -333,7 +334,10 @@ export async function searchPlaces(
     raw = filterOpenNow(raw);
   }
 
-  // 4. Persist new places to local DB (non-blocking, failures are silent)
+  // 4. Apply the three-layer kid-relevance filter + blocklist
+  raw = applyKidFilters(raw);
+
+  // 5. Persist surviving places to local DB (non-blocking, failures are silent)
   await Promise.allSettled(
     raw.map((p) =>
       upsertPlace({
@@ -345,15 +349,15 @@ export async function searchPlaces(
     ),
   );
 
-  // 5. Batch-fetch community kid-flags from our reviews DB
+  // 6. Batch-fetch community kid-flags from our reviews DB
   const kidFlagsMap = await getAggregatedKidFlagsForPlaces(raw.map((p) => p.place_id));
 
-  // 6. Score each place
+  // 7. Score each place
   const scored = raw.map((p) =>
     calculateKidScore(p, latitude, longitude, kidFlagsMap.get(p.place_id) ?? {}),
   );
 
-  // 7. Sort and return
+  // 8. Sort and return
   return sortResults(scored, sortBy);
 }
 

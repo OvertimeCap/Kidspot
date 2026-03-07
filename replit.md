@@ -52,7 +52,14 @@ Google Places Nearby Search
   filterOpenNow()  (optional)  ← removes places with open_now === false
         │
         ▼
-  upsertPlace() batch          ← persists new place_ids to local DB
+  applyKidFilters()            ← three progressive layers + blocklist:
+    ├─ Blocklist               – hard-exclude adult/commercial keyword matches
+    ├─ Layer 1: allowed types  – only playground/park/zoo/restaurant/cafe/etc.
+    ├─ Layer 2: kid evidence   – keyword in name OR inherently-kid type
+    └─ Layer 3: quality gate   – rating ≥ 4.2, ≥ 20 ratings, ≥ 1 photo
+        │
+        ▼
+  upsertPlace() batch          ← persists surviving place_ids to local DB
         │
         ▼
   getAggregatedKidFlagsForPlaces() ← batch-reads crowd-sourced kid_flags from reviews
@@ -63,10 +70,21 @@ Google Places Nearby Search
         │
         ▼
   sortResults()                ← kidScore | distance | rating
+                                   tiebreaker: user_ratings_total → rating → distance
         │
         ▼
   { places: PlaceWithScore[] }
 ```
+
+### Kid filter constants (server/kid-score.ts)
+
+**Allowed types (Layer 1):** playground, amusement_center, park, zoo, tourist_attraction, restaurant, cafe, shopping_mall, sports_club, community_center
+
+**Kid keywords (Layer 2):** kids, kid, infantil, crianças, family, playground, brinquedoteca, parquinho, recreação, espaço kids, baby, menu infantil, cadeirão, trocador, parque, zoo, zoológico…
+
+**Auto-pass types (skip Layer 2):** playground, amusement_center, zoo, community_center, sports_club
+
+**Blocklist:** advocacia, contabilidade, cartório, oficina, consultoria, transportadora, indústria, fábrica, depósito, clínica, hospital, farmácia, posto, combustível, igreja, condomínio
 
 ### Request body
 
