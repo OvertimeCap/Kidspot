@@ -11,6 +11,22 @@ const CITY_BIASES: Record<string, { lat: number; lng: number }> = {
   "Ribeirão Preto": { lat: -21.1704, lng: -47.8102 },
 };
 
+// Kid-friendly text search queries run in parallel when no user query is given
+const KID_TEXT_QUERIES = [
+  "parque playground infantil",
+  "brinquedoteca área kids",
+  "restaurante infantil crianças",
+  "espaço kids monitores",
+];
+
+// Nearby search strategies: each runs as a separate request in parallel
+const KID_NEARBY_STRATEGIES: Array<{ type?: string; keyword?: string }> = [
+  { type: "park" },
+  { type: "amusement_park" },
+  { keyword: "brinquedoteca" },
+  { keyword: "infantil criança kids" },
+];
+
 export type MinimalPlace = {
   place_id: string;
   name: string;
@@ -45,39 +61,107 @@ function pickMinimal(place: Record<string, unknown>): MinimalPlace {
   };
 }
 
-export async function searchPlacesByText(
-  city: string,
-  query?: string,
-): Promise<MinimalPlace[]> {
-  const bias = CITY_BIASES[city];
-  const searchQuery = query
-    ? `${query} em ${city} SP Brasil`
-    : `lugares para crianças em ${city} SP Brasil`;
+function deduplicateAndSort(places: MinimalPlace[]): MinimalPlace[] {
+  const seen = new Set<string>();
+  const unique: MinimalPlace[] = [];
+  for (const p of places) {
+    if (!seen.has(p.place_id)) {
+      seen.add(p.place_id);
+      unique.push(p);
+    }
+  }
+  // Sort by rating descending; no-rating entries go to the end
+  unique.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+  return unique;
+}
 
+async function textSearchOne(
+  query: string,
+  lat?: number,
+  lng?: number,
+  radius = 10000,
+): Promise<MinimalPlace[]> {
   const params = new URLSearchParams({
-    query: searchQuery,
+    query,
     key: GOOGLE_PLACES_API_KEY!,
     language: "pt-BR",
   });
 
-  if (bias) {
-    params.set("location", `${bias.lat},${bias.lng}`);
-    params.set("radius", "10000");
+  if (lat !== undefined && lng !== undefined) {
+    params.set("location", `${lat},${lng}`);
+    params.set("radius", String(radius));
   }
 
-  const url = `${PLACES_BASE}/textsearch/json?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Google Places Text Search failed: ${res.status}`);
+  const res = await fetch(`${PLACES_BASE}/textsearch/json?${params.toString()}`);
+  if (!res.ok) return [];
 
   const data = (await res.json()) as {
     results: Record<string, unknown>[];
     status: string;
   };
-  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-    throw new Error(`Google Places status: ${data.status}`);
+
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return [];
+  return (data.results ?? []).map(pickMinimal);
+}
+
+async function nearbySearchOne(
+  lat: number,
+  lng: number,
+  radius: number,
+  strategy: { type?: string; keyword?: string },
+): Promise<MinimalPlace[]> {
+  const params = new URLSearchParams({
+    location: `${lat},${lng}`,
+    radius: String(radius),
+    key: GOOGLE_PLACES_API_KEY!,
+    language: "pt-BR",
+  });
+
+  if (strategy.type) params.set("type", strategy.type);
+  else params.set("type", "establishment");
+
+  if (strategy.keyword) params.set("keyword", strategy.keyword);
+
+  const res = await fetch(`${PLACES_BASE}/nearbysearch/json?${params.toString()}`);
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as {
+    results: Record<string, unknown>[];
+    status: string;
+  };
+
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return [];
+  return (data.results ?? []).map(pickMinimal);
+}
+
+export async function searchPlacesByText(
+  city: string,
+  query?: string,
+): Promise<MinimalPlace[]> {
+  const bias = CITY_BIASES[city];
+  const lat = bias?.lat;
+  const lng = bias?.lng;
+
+  let queries: string[];
+
+  if (query) {
+    // User typed something specific — search for it with a kid-friendly suffix
+    queries = [`${query} infantil criança em ${city} SP Brasil`];
+  } else {
+    // No query — run all kid-focused categories in parallel
+    queries = KID_TEXT_QUERIES.map((q) => `${q} em ${city} SP Brasil`);
   }
 
-  return (data.results ?? []).map(pickMinimal);
+  const results = await Promise.allSettled(
+    queries.map((q) => textSearchOne(q, lat, lng, 10000)),
+  );
+
+  const all: MinimalPlace[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") all.push(...r.value);
+  }
+
+  return deduplicateAndSort(all);
 }
 
 export async function searchPlacesNearby(
@@ -86,29 +170,29 @@ export async function searchPlacesNearby(
   radiusMeters = 5000,
   keyword?: string,
 ): Promise<MinimalPlace[]> {
-  const params = new URLSearchParams({
-    location: `${lat},${lng}`,
-    radius: String(radiusMeters),
-    key: GOOGLE_PLACES_API_KEY!,
-    language: "pt-BR",
-    type: "establishment",
-  });
+  let strategies: Array<{ type?: string; keyword?: string }>;
 
-  if (keyword) params.set("keyword", keyword);
-
-  const url = `${PLACES_BASE}/nearbysearch/json?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Google Places Nearby Search failed: ${res.status}`);
-
-  const data = (await res.json()) as {
-    results: Record<string, unknown>[];
-    status: string;
-  };
-  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-    throw new Error(`Google Places status: ${data.status}`);
+  if (keyword) {
+    // User specified a keyword — search with kid-friendly context added
+    strategies = [
+      { keyword: `${keyword} infantil criança` },
+      { keyword, type: "park" },
+    ];
+  } else {
+    // No keyword — run all kid-focused strategies in parallel
+    strategies = KID_NEARBY_STRATEGIES;
   }
 
-  return (data.results ?? []).map(pickMinimal);
+  const results = await Promise.allSettled(
+    strategies.map((s) => nearbySearchOne(lat, lng, radiusMeters, s)),
+  );
+
+  const all: MinimalPlace[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") all.push(...r.value);
+  }
+
+  return deduplicateAndSort(all);
 }
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
