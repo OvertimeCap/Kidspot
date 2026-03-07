@@ -25,6 +25,7 @@ import {
 
 type UserLocation = { lat: number; lng: number };
 type City = "Franca" | "Ribeirão Preto";
+type TypeFilter = "Todos" | "Restaurantes" | "Parques";
 
 function PlaceCard({
   place,
@@ -115,11 +116,20 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("Todos");
+
+  const filteredResults = results.filter((place) => {
+    if (typeFilter === "Restaurantes") return place.types.includes("restaurant");
+    if (typeFilter === "Parques")
+      return place.types.includes("park") || place.types.includes("amusement_park");
+    return true;
+  });
 
   const doSearch = useCallback(
     async (params: Parameters<typeof searchPlaces>[0]) => {
       setLoading(true);
       setError(null);
+      setTypeFilter("Todos");
       try {
         const places = await searchPlaces(params);
         setResults(places);
@@ -238,17 +248,41 @@ export default function HomeScreen() {
 
       {searched && !loading && !error && (
         <FlatList
-          data={results}
+          data={filteredResults}
           keyExtractor={(item) => item.place_id}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={
             <View style={styles.resultsHeader}>
               <Text style={styles.resultsCount}>
-                {results.length > 0
-                  ? `${results.length} lugares encontrados`
+                {filteredResults.length > 0
+                  ? `${filteredResults.length} lugares encontrados`
                   : "Nenhum lugar encontrado"}
               </Text>
+
+              <View style={styles.typeFilterRow}>
+                {(["Todos", "Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
+                  <Pressable
+                    key={f}
+                    style={({ pressed }) => [
+                      styles.typeFilterBtn,
+                      typeFilter === f && styles.typeFilterBtnActive,
+                      pressed && styles.btnPressed,
+                    ]}
+                    onPress={() => setTypeFilter(f)}
+                  >
+                    <Text
+                      style={[
+                        styles.typeFilterBtnText,
+                        typeFilter === f && styles.typeFilterBtnTextActive,
+                      ]}
+                    >
+                      {f}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
               <View style={styles.cityButtons}>
                 <Pressable
                   style={({ pressed }) => [styles.filterBtn, pressed && styles.btnPressed]}
@@ -436,6 +470,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textSecondary,
     fontFamily: "Inter_500Medium",
+  },
+  typeFilterRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 4,
+  },
+  typeFilterBtn: {
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  typeFilterBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  typeFilterBtnText: {
+    color: Colors.primary,
+    fontWeight: "600",
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  typeFilterBtnTextActive: {
+    color: "#fff",
   },
   filterBtn: {
     flexDirection: "row",
