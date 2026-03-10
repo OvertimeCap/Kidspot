@@ -361,6 +361,101 @@ export async function searchPlaces(
   return sortResults(scored, sortBy);
 }
 
+// ─── Autocomplete & Geocode ───────────────────────────────────────────────────
+
+export type AutocompleteSuggestion = {
+  place_id: string;
+  description: string;
+};
+
+/**
+ * autocompletePlaces
+ *
+ * Calls the Google Places Autocomplete API to return city/region suggestions
+ * for a partial text input. Results are biased toward the user's current
+ * location (200 km radius) when lat/lng are provided, and restricted to Brazil.
+ */
+export async function autocompletePlaces(
+  input: string,
+  lat?: number,
+  lng?: number,
+): Promise<AutocompleteSuggestion[]> {
+  if (!GOOGLE_PLACES_API_KEY || input.trim().length === 0) return [];
+
+  const qs = new URLSearchParams({
+    input: input.trim(),
+    key: GOOGLE_PLACES_API_KEY,
+    language: "pt-BR",
+    components: "country:br",
+    types: "(cities)",
+  });
+
+  if (lat !== undefined && lng !== undefined) {
+    qs.set("location", `${lat},${lng}`);
+    qs.set("radius", "200000");
+  }
+
+  const res = await fetch(`${PLACES_BASE}/autocomplete/json?${qs.toString()}`);
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as {
+    predictions: { place_id: string; description: string }[];
+    status: string;
+  };
+
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return [];
+
+  return (data.predictions ?? []).slice(0, 5).map((p) => ({
+    place_id: p.place_id,
+    description: p.description,
+  }));
+}
+
+export type GeocodeResult = {
+  lat: number;
+  lng: number;
+  label: string;
+};
+
+/**
+ * geocodePlace
+ *
+ * Resolves a Google Places place_id to a lat/lng coordinate and a
+ * human-readable label using the Places Details API.
+ */
+export async function geocodePlace(placeId: string): Promise<GeocodeResult> {
+  if (!GOOGLE_PLACES_API_KEY) throw new Error("API key not configured");
+
+  const qs = new URLSearchParams({
+    place_id: placeId,
+    fields: "geometry,formatted_address",
+    key: GOOGLE_PLACES_API_KEY,
+    language: "pt-BR",
+  });
+
+  const res = await fetch(`${PLACES_BASE}/details/json?${qs.toString()}`);
+  if (!res.ok) throw new Error(`Geocode request failed: ${res.status}`);
+
+  const data = (await res.json()) as {
+    result: {
+      geometry?: { location: { lat: number; lng: number } };
+      formatted_address?: string;
+    };
+    status: string;
+  };
+
+  if (data.status !== "OK") throw new Error(`Geocode status: ${data.status}`);
+
+  const loc = data.result.geometry?.location;
+  if (!loc) throw new Error("No geometry in geocode result");
+
+  return {
+    lat: loc.lat,
+    lng: loc.lng,
+    label: data.result.formatted_address ?? placeId,
+  };
+}
+
 // ─── Legacy API (kept for backward compatibility) ─────────────────────────────
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {

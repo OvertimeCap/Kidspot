@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import { z } from "zod";
 import { pool } from "./db";
-import { searchPlaces, getPlaceDetails } from "./google-places";
+import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace } from "./google-places";
 import { createReview, getReviewsForPlace, toggleFavorite, getFavoritesForUser } from "./storage";
 import { insertReviewSchema } from "@shared/schema";
 
@@ -129,6 +129,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ places });
     } catch (err) {
       console.error("Places search error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/places/autocomplete", async (req: Request, res: Response) => {
+    const input = (req.query.input as string) ?? "";
+    const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+    const lng = req.query.lng ? parseFloat(req.query.lng as string) : undefined;
+
+    try {
+      const suggestions = await autocompletePlaces(input, lat, lng);
+      res.json({ suggestions });
+    } catch (err) {
+      console.error("Autocomplete error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/places/geocode", async (req: Request, res: Response) => {
+    const placeId = req.query.place_id as string;
+    if (!placeId) {
+      res.status(400).json({ error: "place_id query parameter is required" });
+      return;
+    }
+
+    try {
+      const result = await geocodePlace(placeId);
+      res.json(result);
+    } catch (err) {
+      console.error("Geocode error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });

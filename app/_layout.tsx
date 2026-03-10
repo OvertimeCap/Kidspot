@@ -29,6 +29,16 @@ function RootLayoutNav() {
           headerBackTitle: "Voltar",
         }}
       />
+      <Stack.Screen
+        name="filtros"
+        options={{
+          presentation: "formSheet",
+          sheetAllowedDetents: [0.6],
+          sheetGrabberVisible: true,
+          headerShown: false,
+          contentStyle: { backgroundColor: "#fff" },
+        }}
+      />
     </Stack>
   );
 }

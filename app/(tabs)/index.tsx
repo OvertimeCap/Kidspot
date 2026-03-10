@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   Platform,
 } from "react-native";
 import { Image } from "expo-image";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -24,7 +24,6 @@ import {
 } from "@/lib/api";
 
 type UserLocation = { lat: number; lng: number };
-type City = "Franca" | "Ribeirão Preto";
 type TypeFilter = "Todos" | "Restaurantes" | "Parques";
 
 function PlaceCard({
@@ -110,31 +109,49 @@ function PlaceCard({
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{
+    pickedLat?: string;
+    pickedLng?: string;
+    pickedLabel?: string;
+  }>();
+
   const [results, setResults] = useState<PlaceWithScore[]>([]);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [searched, setSearched] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("Todos");
 
+  const didAutoSearch = useRef(false);
+
   const filteredResults = results.filter((place) => {
-    if (typeFilter === "Restaurantes") return place.types.includes("restaurant");
+    if (typeFilter === "Restaurantes")
+      return place.types.includes("restaurant") || place.types.includes("cafe");
     if (typeFilter === "Parques")
-      return place.types.includes("park") || place.types.includes("amusement_park");
+      return place.types.includes("park") || place.types.includes("amusement_park") || place.types.includes("zoo");
     return true;
   });
 
   const doSearch = useCallback(
-    async (params: Parameters<typeof searchPlaces>[0]) => {
+    async (lat: number, lng: number, label?: string) => {
       setLoading(true);
       setError(null);
       setTypeFilter("Todos");
       try {
-        const places = await searchPlaces(params);
+        const places = await searchPlaces({
+          latitude: lat,
+          longitude: lng,
+          radius: 8000,
+          establishmentType: "park",
+          sortBy: "kidScore",
+        });
         setResults(places);
         setSearched(true);
-      } catch (e) {
+        setUserLocation({ lat, lng });
+        if (label) setActiveLabel(label);
+      } catch {
         setError("Não foi possível buscar lugares. Tente novamente.");
       } finally {
         setLoading(false);
@@ -157,38 +174,38 @@ export default function HomeScreen() {
         accuracy: Location.Accuracy.Balanced,
       });
       const { latitude, longitude } = loc.coords;
-      setUserLocation({ lat: latitude, lng: longitude });
-      await doSearch({
-        latitude,
-        longitude,
-        radius: 5000,
-        establishmentType: "park",
-        sortBy: "kidScore",
-      });
+      await doSearch(latitude, longitude, "Localização atual");
     } catch {
       setError("Não foi possível obter sua localização.");
       setLoading(false);
     }
   }, [doSearch]);
 
-  const CITY_COORDS: Record<City, { lat: number; lng: number }> = {
-    Franca: { lat: -20.5386, lng: -47.4009 },
-    "Ribeirão Preto": { lat: -21.1704, lng: -47.8102 },
-  };
+  useEffect(() => {
+    if (didAutoSearch.current) return;
+    didAutoSearch.current = true;
+    handleSearchNearby();
+  }, []);
 
-  const handleCitySearch = useCallback(
-    (city: City) => {
-      const coords = CITY_COORDS[city];
-      doSearch({
-        latitude: coords.lat,
-        longitude: coords.lng,
-        radius: 8000,
-        establishmentType: "park",
-        sortBy: "kidScore",
-      });
-    },
-    [doSearch],
-  );
+  useEffect(() => {
+    const lat = params.pickedLat ? parseFloat(params.pickedLat) : null;
+    const lng = params.pickedLng ? parseFloat(params.pickedLng) : null;
+    const label = params.pickedLabel ?? undefined;
+    if (lat != null && lng != null) {
+      setActiveLabel(label ?? null);
+      doSearch(lat, lng, label);
+    }
+  }, [params.pickedLat, params.pickedLng, params.pickedLabel]);
+
+  const openFiltros = useCallback(() => {
+    router.push({
+      pathname: "/filtros",
+      params: {
+        lat: userLocation ? String(userLocation.lat) : undefined,
+        lng: userLocation ? String(userLocation.lng) : undefined,
+      },
+    });
+  }, [userLocation]);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
@@ -204,46 +221,6 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {!searched && !loading && (
-        <View style={styles.hero}>
-          <View style={styles.heroIcon}>
-            <Ionicons name="search-circle" size={72} color={Colors.primary} />
-          </View>
-          <Text style={styles.heroTitle}>Encontre lugares{"\n"}para sua família</Text>
-          <Text style={styles.heroSub}>
-            Parques, restaurantes e muito mais{"\n"}em Franca e Ribeirão Preto
-          </Text>
-
-          <Pressable
-            style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
-            onPress={handleSearchNearby}
-          >
-            <Ionicons name="location" size={18} color="#fff" />
-            <Text style={styles.primaryBtnText}>Buscar perto de mim</Text>
-          </Pressable>
-
-          {locationDenied && (
-            <View style={styles.citySection}>
-              <Text style={styles.citySectionLabel}>Escolha uma cidade</Text>
-              <View style={styles.cityButtons}>
-                <Pressable
-                  style={({ pressed }) => [styles.cityBtn, pressed && styles.btnPressed]}
-                  onPress={() => handleCitySearch("Franca")}
-                >
-                  <Text style={styles.cityBtnText}>Franca</Text>
-                </Pressable>
-                <Pressable
-                  style={({ pressed }) => [styles.cityBtn, pressed && styles.btnPressed]}
-                  onPress={() => handleCitySearch("Ribeirão Preto")}
-                >
-                  <Text style={styles.cityBtnText}>Ribeirão Preto</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
-        </View>
-      )}
-
       {loading && (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={Colors.primary} />
@@ -255,11 +232,37 @@ export default function HomeScreen() {
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
           <Text style={styles.errorText}>{error}</Text>
+          <View style={styles.errorActions}>
+            <Pressable
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+              onPress={handleSearchNearby}
+            >
+              <Ionicons name="location" size={16} color="#fff" />
+              <Text style={styles.primaryBtnText}>Perto de mim</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.btnPressed]}
+              onPress={openFiltros}
+            >
+              <Ionicons name="options-outline" size={16} color={Colors.primary} />
+              <Text style={styles.secondaryBtnText}>Filtros</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {locationDenied && !searched && !loading && (
+        <View style={styles.centered}>
+          <Ionicons name="location-outline" size={48} color={Colors.textLight} />
+          <Text style={styles.emptyText}>
+            Permissão de localização negada.{"\n"}Escolha uma cidade nos filtros.
+          </Text>
           <Pressable
             style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
-            onPress={handleSearchNearby}
+            onPress={openFiltros}
           >
-            <Text style={styles.primaryBtnText}>Tentar novamente</Text>
+            <Ionicons name="options-outline" size={16} color="#fff" />
+            <Text style={styles.primaryBtnText}>Filtros</Text>
           </Pressable>
         </View>
       )}
@@ -268,8 +271,10 @@ export default function HomeScreen() {
         <FlatList
           data={filteredResults}
           keyExtractor={(item) => item.place_id}
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[
+            styles.listContent,
+            { paddingBottom: Platform.OS === "web" ? 34 + 16 : insets.bottom + 16 },
+          ]}
           ListHeaderComponent={
             <View style={styles.resultsHeader}>
               <Text style={styles.resultsCount}>
@@ -278,8 +283,17 @@ export default function HomeScreen() {
                   : "Nenhum lugar encontrado"}
               </Text>
 
-              <View style={styles.typeFilterRow}>
-                {(["Todos", "Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
+              {activeLabel && (
+                <View style={styles.locationRow}>
+                  <Ionicons name="location" size={13} color={Colors.primary} />
+                  <Text style={styles.locationLabel} numberOfLines={1}>
+                    {activeLabel}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.filterRow}>
+                {(["Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
                   <Pressable
                     key={f}
                     style={({ pressed }) => [
@@ -287,7 +301,7 @@ export default function HomeScreen() {
                       typeFilter === f && styles.typeFilterBtnActive,
                       pressed && styles.btnPressed,
                     ]}
-                    onPress={() => setTypeFilter(f)}
+                    onPress={() => setTypeFilter(typeFilter === f ? "Todos" : f)}
                   >
                     <Text
                       style={[
@@ -299,27 +313,13 @@ export default function HomeScreen() {
                     </Text>
                   </Pressable>
                 ))}
-              </View>
 
-              <View style={styles.cityButtons}>
                 <Pressable
-                  style={({ pressed }) => [styles.filterBtn, pressed && styles.btnPressed]}
-                  onPress={() => handleCitySearch("Franca")}
+                  style={({ pressed }) => [styles.filtrosBtn, pressed && styles.btnPressed]}
+                  onPress={openFiltros}
                 >
-                  <Text style={styles.filterBtnText}>Franca</Text>
-                </Pressable>
-                <Pressable
-                  style={({ pressed }) => [styles.filterBtn, pressed && styles.btnPressed]}
-                  onPress={() => handleCitySearch("Ribeirão Preto")}
-                >
-                  <Text style={styles.filterBtnText}>Ribeirão Preto</Text>
-                </Pressable>
-                <Pressable
-                  style={({ pressed }) => [styles.filterBtn, pressed && styles.btnPressed]}
-                  onPress={handleSearchNearby}
-                >
-                  <Ionicons name="location-outline" size={14} color={Colors.primary} />
-                  <Text style={styles.filterBtnText}>Perto de mim</Text>
+                  <Ionicons name="options-outline" size={15} color={Colors.primary} />
+                  <Text style={styles.filtrosBtnText}>Filtros</Text>
                 </Pressable>
               </View>
             </View>
@@ -328,8 +328,15 @@ export default function HomeScreen() {
             <View style={styles.centered}>
               <Ionicons name="sad-outline" size={48} color={Colors.textLight} />
               <Text style={styles.emptyText}>
-                Nenhum lugar encontrado.{"\n"}Tente outra busca.
+                Nenhum lugar encontrado.{"\n"}Tente outra localização nos filtros.
               </Text>
+              <Pressable
+                style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+                onPress={openFiltros}
+              >
+                <Ionicons name="options-outline" size={16} color="#fff" />
+                <Text style={styles.primaryBtnText}>Filtros</Text>
+              </Pressable>
             </View>
           }
           renderItem={({ item }) => (
@@ -374,87 +381,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  hero: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 32,
-    gap: 12,
-  },
-  heroIcon: {
-    marginBottom: 8,
-  },
-  heroTitle: {
-    fontSize: 26,
-    fontWeight: "700",
-    color: Colors.text,
-    textAlign: "center",
-    lineHeight: 34,
-    fontFamily: "Inter_700Bold",
-  },
-  heroSub: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-    textAlign: "center",
-    lineHeight: 22,
-    fontFamily: "Inter_400Regular",
-    marginBottom: 8,
-  },
-  primaryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: Colors.primary,
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 14,
-    marginTop: 4,
-  },
-  btnPressed: {
-    opacity: 0.82,
-    transform: [{ scale: 0.98 }],
-  },
-  primaryBtnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-    fontFamily: "Inter_600SemiBold",
-  },
-  citySection: {
-    marginTop: 20,
-    alignItems: "center",
-    gap: 10,
-  },
-  citySectionLabel: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    fontFamily: "Inter_500Medium",
-  },
-  cityButtons: {
-    flexDirection: "row",
-    gap: 10,
-    flexWrap: "wrap",
-    justifyContent: "center",
-  },
-  cityBtn: {
-    borderWidth: 1.5,
-    borderColor: Colors.primary,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-  },
-  cityBtnText: {
-    color: Colors.primary,
-    fontWeight: "600",
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-  },
   centered: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 32,
-    gap: 12,
+    gap: 14,
   },
   loadingText: {
     color: Colors.textSecondary,
@@ -468,6 +400,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontFamily: "Inter_400Regular",
   },
+  errorActions: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 4,
+  },
   emptyText: {
     color: Colors.textSecondary,
     fontSize: 15,
@@ -475,24 +412,70 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontFamily: "Inter_400Regular",
   },
+  primaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: Colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+    borderRadius: 12,
+  },
+  secondaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+    borderRadius: 12,
+  },
+  btnPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.98 }],
+  },
+  primaryBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+  },
+  secondaryBtnText: {
+    color: Colors.primary,
+    fontSize: 15,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+  },
   listContent: {
     padding: 16,
     gap: 14,
-    paddingBottom: 100,
   },
   resultsHeader: {
     marginBottom: 8,
-    gap: 10,
+    gap: 8,
   },
   resultsCount: {
     fontSize: 14,
     color: Colors.textSecondary,
     fontFamily: "Inter_500Medium",
   },
-  typeFilterRow: {
+  locationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  locationLabel: {
+    fontSize: 13,
+    color: Colors.primary,
+    fontFamily: "Inter_500Medium",
+    flex: 1,
+  },
+  filterRow: {
     flexDirection: "row",
     gap: 8,
-    marginBottom: 4,
+    alignItems: "center",
+    flexWrap: "wrap",
   },
   typeFilterBtn: {
     borderWidth: 1.5,
@@ -513,20 +496,20 @@ const styles = StyleSheet.create({
   typeFilterBtnTextActive: {
     color: "#fff",
   },
-  filterBtn: {
+  filtrosBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 5,
     borderWidth: 1.5,
     borderColor: Colors.primary,
-    borderRadius: 8,
+    borderRadius: 20,
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
   },
-  filterBtnText: {
+  filtrosBtnText: {
     color: Colors.primary,
-    fontWeight: "600",
     fontSize: 13,
+    fontWeight: "600",
     fontFamily: "Inter_600SemiBold",
   },
   card: {
