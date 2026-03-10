@@ -49,6 +49,7 @@ export type EstablishmentType =
   | "amusement_center"
   | "restaurant"
   | "cafe"
+  | "bakery"
   | "shopping_mall"
   | "zoo"
   | "tourist_attraction"
@@ -70,7 +71,10 @@ export type SearchParams = {
   latitude: number;
   longitude: number;
   radius?: number;
-  establishmentType: EstablishmentType;
+  /** Single type — kept for backward compat. Prefer establishmentTypes for home search. */
+  establishmentType?: EstablishmentType;
+  /** Run one Google fetch per type in parallel and merge results. */
+  establishmentTypes?: EstablishmentType[];
   openNow?: boolean;
   query?: string;
   sortBy?: SortBy;

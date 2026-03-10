@@ -26,6 +26,11 @@ import {
 type UserLocation = { lat: number; lng: number };
 type TypeFilter = "Todos" | "Restaurantes" | "Parques";
 
+const FOOD_TYPES = new Set(["restaurant", "cafe", "bakery", "meal_takeaway", "food"]);
+const PARK_TYPES = new Set([
+  "park", "playground", "amusement_center", "amusement_park", "zoo", "tourist_attraction",
+]);
+
 function PlaceCard({
   place,
   userLocation,
@@ -128,9 +133,9 @@ export default function HomeScreen() {
 
   const filteredResults = results.filter((place) => {
     if (typeFilter === "Restaurantes")
-      return place.types.includes("restaurant") || place.types.includes("cafe");
+      return place.types.some((t) => FOOD_TYPES.has(t));
     if (typeFilter === "Parques")
-      return place.types.includes("park") || place.types.includes("amusement_park") || place.types.includes("zoo");
+      return place.types.some((t) => PARK_TYPES.has(t));
     return true;
   });
 
@@ -144,7 +149,15 @@ export default function HomeScreen() {
           latitude: lat,
           longitude: lng,
           radius: 8000,
-          establishmentType: "park",
+          establishmentTypes: [
+            "park",
+            "playground",
+            "amusement_center",
+            "zoo",
+            "tourist_attraction",
+            "restaurant",
+            "cafe",
+          ],
           sortBy: "kidScore",
         });
         setResults(places);

@@ -27,6 +27,7 @@ export type EstablishmentType =
   | "amusement_center"
   | "restaurant"
   | "cafe"
+  | "bakery"
   | "shopping_mall"
   | "zoo"
   | "tourist_attraction"
@@ -77,6 +78,7 @@ export const ALLOWED_TYPES = new Set([
   "tourist_attraction",
   "restaurant",
   "cafe",
+  "bakery",
   "shopping_mall",
   "sports_club",
   "community_center",
@@ -120,6 +122,11 @@ export const KID_KEYWORDS = [
 
 /**
  * Types that automatically satisfy Layer 2 (kid nature is inherent).
+ *
+ * Food establishments (restaurant, cafe, bakery) are included here because
+ * they almost never have kid-keywords in their name yet can be family-friendly.
+ * Layer 3 (quality gate: rating ≥ 4.2, ≥ 20 reviews, photo) acts as the
+ * quality signal for these types instead.
  */
 export const KID_AUTO_PASS_TYPES = new Set([
   "playground",
@@ -128,6 +135,11 @@ export const KID_AUTO_PASS_TYPES = new Set([
   "zoo",
   "community_center",
   "sports_club",
+  // Food establishments — pass Layer 2, gated by Layer 3 quality check
+  "restaurant",
+  "cafe",
+  "bakery",
+  "shopping_mall",
 ]);
 
 /**

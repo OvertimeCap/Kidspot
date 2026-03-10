@@ -291,7 +291,10 @@ export type SearchPlacesParams = {
   latitude: number;
   longitude: number;
   radius: number;
-  establishmentType: EstablishmentType;
+  /** Single type (kept for backward compat). Ignored when establishmentTypes is provided. */
+  establishmentType?: EstablishmentType;
+  /** When provided, runs one Google fetch per type in parallel and merges results. */
+  establishmentTypes?: EstablishmentType[];
   openNow?: boolean;
   query?: string;
   sortBy?: SortBy;
@@ -309,27 +312,39 @@ export type SearchPlacesParams = {
 export async function searchPlaces(
   params: SearchPlacesParams,
 ): Promise<PlaceWithScore[]> {
-  const { latitude, longitude, radius, establishmentType, openNow, query, sortBy = "kidScore" } =
+  const { latitude, longitude, radius, establishmentType, establishmentTypes, openNow, query, sortBy = "kidScore" } =
     params;
 
-  // 1. Fetch from Google Places
-  let raw = await fetchGooglePlaces({
-    latitude,
-    longitude,
-    radius,
-    type: establishmentType,
-    query,
-  });
+  // 1. Determine which types to search
+  const typesToSearch: EstablishmentType[] =
+    establishmentTypes && establishmentTypes.length > 0
+      ? establishmentTypes
+      : establishmentType
+        ? [establishmentType]
+        : [];
 
-  // 2. Deduplicate
+  if (typesToSearch.length === 0) return [];
+
+  // 2. Fetch from Google Places — run one request per type in parallel
+  const fetchResults = await Promise.allSettled(
+    typesToSearch.map((t) =>
+      fetchGooglePlaces({ latitude, longitude, radius, type: t, query }),
+    ),
+  );
+
+  const combined = fetchResults.flatMap((r) =>
+    r.status === "fulfilled" ? r.value : [],
+  );
+
+  // 3. Deduplicate by place_id
   const seen = new Set<string>();
-  raw = raw.filter((p) => {
+  let raw = combined.filter((p) => {
     if (seen.has(p.place_id)) return false;
     seen.add(p.place_id);
     return true;
   });
 
-  // 3. Optional openNow filter
+  // 4. Optional openNow filter
   if (openNow) {
     raw = filterOpenNow(raw);
   }

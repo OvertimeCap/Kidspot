@@ -96,26 +96,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
    *   ]
    * }
    */
-  const searchBodySchema = z.object({
-    latitude: z.number(),
-    longitude: z.number(),
-    radius: z.number().positive().max(10_000).default(5_000),
-    establishmentType: z.enum([
-      "playground",
-      "park",
-      "amusement_center",
-      "restaurant",
-      "cafe",
-      "shopping_mall",
-      "zoo",
-      "tourist_attraction",
-      "sports_club",
-      "community_center",
-    ]),
-    openNow: z.boolean().optional(),
-    query: z.string().optional(),
-    sortBy: z.enum(["kidScore", "distance", "rating"]).default("kidScore"),
-  });
+  const ESTABLISHMENT_TYPES = [
+    "playground",
+    "park",
+    "amusement_center",
+    "restaurant",
+    "cafe",
+    "bakery",
+    "shopping_mall",
+    "zoo",
+    "tourist_attraction",
+    "sports_club",
+    "community_center",
+  ] as const;
+
+  const searchBodySchema = z
+    .object({
+      latitude: z.number(),
+      longitude: z.number(),
+      radius: z.number().positive().max(10_000).default(5_000),
+      establishmentType: z.enum(ESTABLISHMENT_TYPES).optional(),
+      establishmentTypes: z.array(z.enum(ESTABLISHMENT_TYPES)).optional(),
+      openNow: z.boolean().optional(),
+      query: z.string().optional(),
+      sortBy: z.enum(["kidScore", "distance", "rating"]).default("kidScore"),
+    })
+    .refine(
+      (d) =>
+        d.establishmentType != null ||
+        (d.establishmentTypes != null && d.establishmentTypes.length > 0),
+      { message: "Provide establishmentType or establishmentTypes" },
+    );
 
   app.post("/api/places/search", async (req: Request, res: Response) => {
     const parsed = searchBodySchema.safeParse(req.body);
