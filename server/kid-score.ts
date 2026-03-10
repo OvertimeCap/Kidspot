@@ -129,9 +129,12 @@ export const KID_KEYWORDS = [
  * quality signal for these types instead.
  */
 export const KID_AUTO_PASS_TYPES = new Set([
+  // Public outdoor spaces — inherently kid-relevant
+  "park",
   "playground",
-  "amusement_center",
   "amusement_park",
+  // Leisure venues — inherently kid-relevant
+  "amusement_center",
   "zoo",
   "community_center",
   "sports_club",
@@ -250,16 +253,49 @@ export function filterByKidEvidence<T extends Filterable>(places: T[]): T[] {
 }
 
 /**
+ * Types that are inherently public spaces — parks, playgrounds, etc.
+ * These pass Layer 3 unconditionally because:
+ *   - Public parks rarely have ratings or photos in Google Places
+ *   - Their kid-relevance is already guaranteed by Layer 1 + Layer 2
+ *   - Filtering them by business-oriented quality metrics makes no sense
+ */
+export const QUALITY_GATE_EXEMPT_TYPES = new Set([
+  "park",
+  "playground",
+  "amusement_park",
+]);
+
+/**
  * Layer 3 – Quality gate.
- * Requires rating ≥ 4.2, ≥ 20 ratings, and at least one photo.
+ *
+ * Commercial establishments (restaurants, cafes, shopping malls, etc.) must
+ * meet the full quality bar: rating ≥ 4.2, ≥ 20 reviews, at least one photo.
+ *
+ * Public spaces in QUALITY_GATE_EXEMPT_TYPES bypass this check entirely —
+ * their kid-relevance is established by Layers 1 and 2 already.
+ *
+ * Mid-tier leisure venues (amusement_center, zoo, tourist_attraction, etc.)
+ * use a relaxed bar: rating ≥ 3.8, ≥ 5 reviews (photos optional).
  */
 export function filterByQuality<T extends Filterable>(places: T[]): T[] {
-  return places.filter(
-    (p) =>
-      (p.rating ?? 0) >= 4.2 &&
-      (p.user_ratings_total ?? 0) >= 20 &&
-      (p.photos?.length ?? 0) > 0,
-  );
+  return places.filter((p) => {
+    // Public spaces — always pass
+    if (p.types.some((t) => QUALITY_GATE_EXEMPT_TYPES.has(t))) return true;
+
+    const rating = p.rating ?? 0;
+    const reviewCount = p.user_ratings_total ?? 0;
+
+    // Commercial food/retail — strict gate
+    const isCommercial = p.types.some((t) =>
+      ["restaurant", "cafe", "bakery", "shopping_mall"].includes(t),
+    );
+    if (isCommercial) {
+      return rating >= 4.2 && reviewCount >= 20 && (p.photos?.length ?? 0) > 0;
+    }
+
+    // Everything else (amusement_center, zoo, tourist_attraction, etc.) — relaxed gate
+    return rating >= 3.8 && reviewCount >= 5;
+  });
 }
 
 /**
