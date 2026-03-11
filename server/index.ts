@@ -1,5 +1,6 @@
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
+import { createProxyMiddleware } from "http-proxy-middleware";
 import { registerRoutes } from "./routes";
 import * as fs from "fs";
 import * as path from "path";
@@ -161,6 +162,47 @@ function serveLandingPage({
 }
 
 function configureExpoAndLanding(app: express.Application) {
+  const isDev = process.env.NODE_ENV !== "production";
+
+  if (isDev) {
+    // In development, proxy all non-API traffic to Metro (port 8081) so the
+    // Replit preview pane shows the live Expo web app instead of the landing page.
+    log("Dev mode: proxying web traffic → Metro at http://localhost:8081");
+
+    const metroProxy = createProxyMiddleware({
+      target: "http://localhost:8081",
+      changeOrigin: true,
+      ws: true, // forward WebSocket connections for Hot Module Reloading
+      on: {
+        error: (_err, _req, res) => {
+          // Metro may still be bundling — send a friendly retry page
+          if (res && "writeHead" in res) {
+            (res as Response).status(503).send(
+              `<html><head><meta http-equiv="refresh" content="3"></head>
+               <body style="font-family:sans-serif;text-align:center;padding:60px">
+               <p>Starting Expo bundler… the page will refresh automatically.</p>
+               </body></html>`,
+            );
+          }
+        },
+      },
+    });
+
+    // Handle native Expo manifests (Expo Go on device) before proxying
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith("/api")) return next();
+      const platform = req.header("expo-platform");
+      if (platform && (platform === "ios" || platform === "android")) {
+        return serveExpoManifest(platform, res);
+      }
+      return next();
+    });
+
+    app.use(metroProxy);
+    return;
+  }
+
+  // Production: serve the pre-built static Expo bundle + landing page fallback
   const templatePath = path.resolve(
     process.cwd(),
     "server",
@@ -173,13 +215,8 @@ function configureExpoAndLanding(app: express.Application) {
   log("Serving static Expo files with dynamic manifest routing");
 
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith("/api")) {
-      return next();
-    }
-
-    if (req.path !== "/" && req.path !== "/manifest") {
-      return next();
-    }
+    if (req.path.startsWith("/api")) return next();
+    if (req.path !== "/" && req.path !== "/manifest") return next();
 
     const platform = req.header("expo-platform");
     if (platform && (platform === "ios" || platform === "android")) {
@@ -187,12 +224,7 @@ function configureExpoAndLanding(app: express.Application) {
     }
 
     if (req.path === "/") {
-      return serveLandingPage({
-        req,
-        res,
-        landingPageTemplate,
-        appName,
-      });
+      return serveLandingPage({ req, res, landingPageTemplate, appName });
     }
 
     next();
