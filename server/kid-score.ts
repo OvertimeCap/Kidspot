@@ -209,18 +209,69 @@ export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
   ["kids", "Ambiente Kids"],
 ];
 
+export type ReviewAnalysis = {
+  /** Human-readable label of the highest-priority keyword found (undefined = none found) */
+  highlight: string | undefined;
+  /** Number of individual reviews that contain at least one family keyword */
+  reviewsWithKeyword: number;
+  /** Number of distinct keyword labels found across all reviews */
+  distinctKeywords: number;
+};
+
 /**
- * extractFamilyHighlight – scans an array of review texts for the first
- * recognised family/kid keyword and returns a human-readable label.
+ * analyseReviews – scans each review independently and returns:
+ *   - `highlight`         : label of the first (highest-priority) keyword found
+ *   - `reviewsWithKeyword`: count of reviews that mention at least one family term
+ *   - `distinctKeywords`  : count of distinct keyword labels across all reviews
  *
- * Returns `undefined` when no keyword is found.
+ * Used by calculateReviewBonus and calculateKidScore.
+ */
+export function analyseReviews(reviewTexts: string[]): ReviewAnalysis {
+  let highlight: string | undefined;
+  let reviewsWithKeyword = 0;
+  const foundLabels = new Set<string>();
+
+  for (const text of reviewTexts) {
+    const norm = normalise(text);
+    let reviewHasKeyword = false;
+
+    for (const [kw, label] of FAMILY_REVIEW_KEYWORD_MAP) {
+      if (norm.includes(normalise(kw))) {
+        reviewHasKeyword = true;
+        foundLabels.add(label);
+        // Keep the highest-priority highlight (first match wins globally)
+        if (!highlight) highlight = label;
+      }
+    }
+
+    if (reviewHasKeyword) reviewsWithKeyword++;
+  }
+
+  return { highlight, reviewsWithKeyword, distinctKeywords: foundLabels.size };
+}
+
+/**
+ * calculateReviewBonus – graduated scoring formula based on review analysis.
+ *
+ *   bonus = (reviewsWithKeyword × 10) + (distinctKeywords × 5)
+ *
+ * Examples:
+ *   1 review, 1 keyword label  → 10 + 5  = 15
+ *   3 reviews, 2 keyword labels → 30 + 10 = 40
+ *   5 reviews, 4 keyword labels → 50 + 20 = 70
+ *
+ * Maximum possible (5 reviews, all distinct labels) is capped at 75.
+ */
+export function calculateReviewBonus(analysis: ReviewAnalysis): number {
+  return (analysis.reviewsWithKeyword * 10) + (analysis.distinctKeywords * 5);
+}
+
+/**
+ * extractFamilyHighlight – kept for backward compatibility.
+ * Returns the highest-priority label found across all review texts.
  */
 export function extractFamilyHighlight(reviewTexts: string[]): string | undefined {
-  const combined = reviewTexts.map((t) => normalise(t)).join(" ");
-  for (const [kw, label] of FAMILY_REVIEW_KEYWORD_MAP) {
-    if (combined.includes(normalise(kw))) return label;
-  }
-  return undefined;
+  return analyseReviews(reviewTexts).highlight;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -436,11 +487,12 @@ export function calculateKidScore(
     breakdown.proximity_bonus = 10;
   }
 
-  // 5. Review-based family highlight (+20 if any family keyword found in reviews)
-  const family_highlight = extractFamilyHighlight(reviewTexts);
-  if (family_highlight) {
-    breakdown.review_bonus = 20;
-  }
+  // 5. Review-based graduated bonus
+  //    bonus = (reviewsWithKeyword × 10) + (distinctKeywords × 5)
+  //    Max achievable with Google's 5-review limit: 5×10 + N×5
+  const reviewAnalysis = analyseReviews(reviewTexts);
+  const family_highlight = reviewAnalysis.highlight;
+  breakdown.review_bonus = calculateReviewBonus(reviewAnalysis);
 
   const kid_score =
     breakdown.type_bonus +
@@ -465,13 +517,21 @@ export function calculateKidScore(
 /**
  * sortResults – orders a list of scored places.
  *
- * All strategies use a 3-key tiebreaker:
- *   user_ratings_total DESC → rating DESC → distance ASC
- *
  * Primary key per strategy:
- *   kidScore  – kid_score DESC, then tiebreaker
- *   rating    – user_ratings_total DESC, then rating DESC, then distance ASC
- *   distance  – distance ASC, then rating DESC, then user_ratings_total DESC
+ *
+ *   kidScore (default):
+ *     1. has_family_highlight DESC  — places with confirmed family features always first
+ *     2. user_ratings_total DESC    — among highlighted: most reviewed comes first
+ *     3. kid_score DESC             — among non-highlighted: highest score first
+ *     4. user_ratings_total DESC    — tiebreaker: most reviewed
+ *     5. rating DESC
+ *     6. distance ASC
+ *
+ *   rating:
+ *     user_ratings_total DESC → rating DESC → distance ASC
+ *
+ *   distance:
+ *     distance ASC → rating DESC → user_ratings_total DESC
  */
 export function sortResults(places: PlaceWithScore[], sortBy: SortBy): PlaceWithScore[] {
   const copy = [...places];
@@ -502,8 +562,16 @@ export function sortResults(places: PlaceWithScore[], sortBy: SortBy): PlaceWith
     case "kidScore":
     default:
       copy.sort((a, b) => {
+        // 1. Places with family highlight always come before those without
+        const aHas = a.family_highlight ? 1 : 0;
+        const bHas = b.family_highlight ? 1 : 0;
+        if (bHas !== aHas) return bHas - aHas;
+
+        // 2. Both have (or both lack) family highlight → compare by kid_score
         const scoreDiff = b.kid_score - a.kid_score;
         if (scoreDiff !== 0) return scoreDiff;
+
+        // 3. Same score → fall back to popularity
         return byPopularity(a, b);
       });
       break;
