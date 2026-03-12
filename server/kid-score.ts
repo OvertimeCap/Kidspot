@@ -191,6 +191,7 @@ export const BLOCK_KEYWORDS = [
  * Each entry: [keyword to match (normalised), human-readable label]
  */
 export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
+  // ── Português ────────────────────────────────────────────────────
   ["brinquedoteca", "Brinquedoteca"],
   ["parquinho", "Parquinho"],
   ["playground", "Playground"],
@@ -207,6 +208,24 @@ export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
   ["infantil", "Ambiente familiar"],
   ["familia", "Ambiente familiar"],
   ["kids", "Ambiente Kids"],
+  // ── Inglês (reviews frequentes no Google Brasil) ─────────────────
+  ["playroom", "Brinquedoteca"],
+  ["kids area", "Área Kids"],
+  ["kids room", "Área Kids"],
+  ["play area", "Área Kids"],
+  ["children area", "Área Kids"],
+  ["kids corner", "Área Kids"],
+  ["kids menu", "Menu infantil"],
+  ["children menu", "Menu infantil"],
+  ["child friendly", "Ambiente familiar"],
+  ["family friendly", "Ambiente familiar"],
+  ["kid friendly", "Ambiente familiar"],
+  ["children welcome", "Ambiente familiar"],
+  ["kids welcome", "Ambiente familiar"],
+  ["diaper", "Fraldário"],
+  ["changing table", "Fraldário"],
+  ["toddler", "Ambiente familiar"],
+  ["stroller", "Ambiente familiar"],
 ];
 
 export type ReviewAnalysis = {
@@ -491,8 +510,26 @@ export function calculateKidScore(
   //    bonus = (reviewsWithKeyword × 10) + (distinctKeywords × 5)
   //    Max achievable with Google's 5-review limit: 5×10 + N×5
   const reviewAnalysis = analyseReviews(reviewTexts);
-  const family_highlight = reviewAnalysis.highlight;
+  const reviewHighlight = reviewAnalysis.highlight;
   breakdown.review_bonus = calculateReviewBonus(reviewAnalysis);
+
+  // 6. Auto-highlight based on place type (fallback when reviews have no signal).
+  //    Reviews take priority; type is the safety net so every inherently
+  //    kid-friendly venue always shows a family tag to the user.
+  const TYPE_AUTO_HIGHLIGHTS: Record<string, string> = {
+    playground: "Playground",
+    amusement_center: "Centro de diversões",
+    amusement_park: "Parque de diversões",
+    zoo: "Zoológico",
+    community_center: "Espaço comunitário",
+    sports_club: "Clube esportivo",
+  };
+  const typeHighlight = place.types
+    .map((t) => TYPE_AUTO_HIGHLIGHTS[t])
+    .find((h) => h !== undefined);
+
+  // Review signal wins; type-based is the fallback
+  const family_highlight = reviewHighlight ?? typeHighlight;
 
   const kid_score =
     breakdown.type_bonus +

@@ -234,22 +234,29 @@ export async function searchPlacesNearby(
 
 // ─── Review fetching ──────────────────────────────────────────────────────────
 
-const REVIEW_FETCH_TIMEOUT_MS = 4_000;
-const REVIEW_ENRICH_TOP_N = 15;
+const REVIEW_FETCH_TIMEOUT_MS = 5_000;
+const REVIEW_ENRICH_TOP_N = 30;
 
 /**
- * fetchPlaceReviews
+ * fetchPlaceTextData
  *
- * Fetches only the `reviews` field from the Google Places Details API for a
- * single place. Returns an array of review text strings (up to 5, as Google
- * provides). Returns an empty array on any error.
+ * Fetches `reviews` + `editorial_summary` from the Google Places Details API
+ * for a single place. Returns all available text strings combined so that
+ * `analyseReviews` has the richest possible signal.
+ *
+ * - reviews          : up to 5 user reviews in pt-BR (Google's limit)
+ * - editorial_summary: short Google-authored description; often mentions
+ *                      "family-friendly", "kids area", etc. — included as
+ *                      an extra text source at no additional API cost.
+ *
+ * Returns an empty array on any error.
  */
 export async function fetchPlaceReviews(placeId: string): Promise<string[]> {
   if (!GOOGLE_PLACES_API_KEY) return [];
 
   const qs = new URLSearchParams({
     place_id: placeId,
-    fields: "reviews",
+    fields: "reviews,editorial_summary",
     key: GOOGLE_PLACES_API_KEY,
     language: "pt-BR",
   });
@@ -264,15 +271,28 @@ export async function fetchPlaceReviews(placeId: string): Promise<string[]> {
     if (!res.ok) return [];
 
     const data = (await res.json()) as {
-      result?: { reviews?: Array<{ text?: string; original_language?: string }> };
+      result?: {
+        reviews?: Array<{ text?: string }>;
+        editorial_summary?: { overview?: string };
+      };
       status: string;
     };
 
-    if (data.status !== "OK" || !data.result?.reviews) return [];
+    if (data.status !== "OK" || !data.result) return [];
 
-    return data.result.reviews
-      .map((r) => r.text ?? "")
-      .filter((t) => t.length > 0);
+    const texts: string[] = [];
+
+    // Add editorial summary first (higher signal-to-noise than user reviews)
+    const overview = data.result.editorial_summary?.overview;
+    if (overview && overview.trim().length > 0) texts.push(overview.trim());
+
+    // Add user reviews
+    for (const r of data.result.reviews ?? []) {
+      const t = r.text?.trim() ?? "";
+      if (t.length > 0) texts.push(t);
+    }
+
+    return texts;
   } catch {
     return [];
   } finally {
