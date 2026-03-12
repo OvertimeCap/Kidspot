@@ -16,6 +16,26 @@ if (!GOOGLE_PLACES_API_KEY) {
 }
 
 const PLACES_BASE = "https://maps.googleapis.com/maps/api/place";
+const FETCH_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(
+  url: string,
+  label: string,
+): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    return res;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      console.warn(`Google Places fetch timed out: ${label}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const CITY_BIASES: Record<string, { lat: number; lng: number }> = {
   Franca: { lat: -20.5386, lng: -47.4009 },
@@ -103,7 +123,10 @@ async function textSearchOne(
     params.set("radius", String(radius));
   }
 
-  const res = await fetch(`${PLACES_BASE}/textsearch/json?${params.toString()}`);
+  let res: globalThis.Response;
+  try {
+    res = await fetchWithTimeout(`${PLACES_BASE}/textsearch/json?${params.toString()}`, "textSearchOne");
+  } catch { return []; }
   if (!res.ok) return [];
 
   const data = (await res.json()) as {
@@ -133,7 +156,10 @@ async function nearbySearchOne(
 
   if (strategy.keyword) params.set("keyword", strategy.keyword);
 
-  const res = await fetch(`${PLACES_BASE}/nearbysearch/json?${params.toString()}`);
+  let res: globalThis.Response;
+  try {
+    res = await fetchWithTimeout(`${PLACES_BASE}/nearbysearch/json?${params.toString()}`, "nearbySearchOne");
+  } catch { return []; }
   if (!res.ok) return [];
 
   const data = (await res.json()) as {
@@ -264,7 +290,13 @@ export async function fetchGooglePlaces(
 
   if (params.query) qs.set("keyword", params.query);
 
-  const res = await fetch(`${PLACES_BASE}/nearbysearch/json?${qs.toString()}`);
+  let res: globalThis.Response;
+  try {
+    res = await fetchWithTimeout(
+      `${PLACES_BASE}/nearbysearch/json?${qs.toString()}`,
+      `fetchGooglePlaces type="${params.type}"`,
+    );
+  } catch { return []; }
   if (!res.ok) return [];
 
   const data = (await res.json()) as {
@@ -410,7 +442,10 @@ export async function autocompletePlaces(
     qs.set("radius", "200000");
   }
 
-  const res = await fetch(`${PLACES_BASE}/autocomplete/json?${qs.toString()}`);
+  let res: globalThis.Response;
+  try {
+    res = await fetchWithTimeout(`${PLACES_BASE}/autocomplete/json?${qs.toString()}`, "autocompletePlaces");
+  } catch { return []; }
   if (!res.ok) return [];
 
   const data = (await res.json()) as {
@@ -448,7 +483,7 @@ export async function geocodePlace(placeId: string): Promise<GeocodeResult> {
     language: "pt-BR",
   });
 
-  const res = await fetch(`${PLACES_BASE}/details/json?${qs.toString()}`);
+  const res = await fetchWithTimeout(`${PLACES_BASE}/details/json?${qs.toString()}`, "geocodePlace");
   if (!res.ok) throw new Error(`Geocode request failed: ${res.status}`);
 
   const data = (await res.json()) as {
@@ -488,7 +523,7 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
   });
 
   const url = `${PLACES_BASE}/details/json?${params.toString()}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, "getPlaceDetails");
   if (!res.ok) throw new Error(`Google Places Details failed: ${res.status}`);
 
   const data = (await res.json()) as {

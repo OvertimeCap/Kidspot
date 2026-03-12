@@ -172,8 +172,12 @@ function configureExpoAndLanding(app: express.Application) {
     const metroProxy = createProxyMiddleware({
       target: "http://localhost:8081",
       changeOrigin: true,
-      ws: true, // forward WebSocket connections for Hot Module Reloading
+      ws: true,
+      pathFilter: (path) => !path.startsWith("/api"),
       on: {
+        proxyReq: (proxyReq) => {
+          proxyReq.removeHeader("origin");
+        },
         error: (_err, _req, res) => {
           // Metro may still be bundling — send a friendly retry page
           if (res && "writeHead" in res) {
