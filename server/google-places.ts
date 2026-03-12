@@ -8,7 +8,7 @@ import {
   type PlaceWithScore,
 } from "./kid-score";
 import { getAggregatedKidFlagsForPlaces, upsertPlace } from "./storage";
-import { matchFoursquarePlace, calculateFoursquareBonus } from "./foursquare";
+import { matchFoursquarePlace, calculateFoursquareBonus, calculateCrossSourceBonus, type FoursquareMatch } from "./foursquare";
 import { analyzeReviewsWithAI, calculateAIReviewBonus } from "./ai-review-analysis";
 
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -506,10 +506,12 @@ export async function searchPlaces(
     reviewsMap.set(p.place_id, r.status === "fulfilled" ? r.value : []);
   });
 
+  const foursquareMatchMap = new Map<string, FoursquareMatch | null>();
   const foursquareMap = new Map<string, number>();
   topRawPlaces.forEach((p, i) => {
     const r = foursquareResults[i];
     const match = r.status === "fulfilled" ? r.value : null;
+    foursquareMatchMap.set(p.place_id, match);
     foursquareMap.set(p.place_id, calculateFoursquareBonus(match));
   });
 
@@ -533,8 +535,9 @@ export async function searchPlaces(
   }
 
   // 9. Re-score top candidates with review texts + enrichment data
-  const enrichedTop = topRawPlaces.map((p) =>
-    calculateKidScore(
+  const enrichedTop = topRawPlaces.map((p) => {
+    const fsqMatch = foursquareMatchMap.get(p.place_id) ?? null;
+    return calculateKidScore(
       p,
       latitude,
       longitude,
@@ -543,9 +546,10 @@ export async function searchPlaces(
       {
         foursquareBonus: foursquareMap.get(p.place_id) ?? 0,
         aiReviewBonus: aiMap.get(p.place_id) ?? 0,
+        crossSourceBonus: calculateCrossSourceBonus(p.rating, p.user_ratings_total, fsqMatch),
       },
-    ),
-  );
+    );
+  });
 
   // 10. Merge enriched top + rest, then sort and return
   const allScored = [...enrichedTop, ...restCandidates];

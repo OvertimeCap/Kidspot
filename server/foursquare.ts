@@ -17,6 +17,8 @@ export type FoursquareMatch = {
   rating: number | undefined;
   popularity: number;
   categories: string[];
+  stats_total_photos: number;
+  stats_total_tips: number;
 };
 
 async function fetchWithTimeout(
@@ -121,7 +123,7 @@ export async function searchFoursquareNearby(
     query,
     radius: String(radius),
     limit: "5",
-    fields: "fsq_id,name,rating,popularity,categories",
+    fields: "fsq_id,name,rating,popularity,categories,stats",
   });
 
   let res: globalThis.Response;
@@ -140,6 +142,7 @@ export async function searchFoursquareNearby(
       rating?: number;
       popularity?: number;
       categories?: Array<{ name: string }>;
+      stats?: { total_photos?: number; total_tips?: number };
     }>;
   };
 
@@ -149,6 +152,8 @@ export async function searchFoursquareNearby(
     rating: r.rating,
     popularity: r.popularity ?? 0,
     categories: (r.categories ?? []).map((c) => c.name),
+    stats_total_photos: r.stats?.total_photos ?? 0,
+    stats_total_tips: r.stats?.total_tips ?? 0,
   }));
 }
 
@@ -180,7 +185,7 @@ export async function matchFoursquarePlace(
   if (bestMatch) {
     await setCachedEnrichment(placeId, bestMatch);
   } else {
-    await setCachedEnrichment(placeId, { fsq_id: "", name: "", rating: undefined, popularity: 0, categories: [] });
+    await setCachedEnrichment(placeId, { fsq_id: "", name: "", rating: undefined, popularity: 0, categories: [], stats_total_photos: 0, stats_total_tips: 0 });
   }
 
   return bestMatch;
@@ -192,13 +197,45 @@ export function calculateFoursquareBonus(match: FoursquareMatch | null): number 
   let bonus = 0;
 
   if (match.rating !== undefined) {
-    if (match.rating >= 8.0) bonus += 10;
-    else if (match.rating >= 7.0) bonus += 7;
-    else if (match.rating >= 6.0) bonus += 4;
+    if (match.rating >= 8.0) bonus += 5;
+    else if (match.rating >= 7.0) bonus += 3;
+    else if (match.rating >= 6.0) bonus += 2;
   }
 
-  if (match.popularity >= 0.8) bonus += 5;
-  else if (match.popularity >= 0.5) bonus += 3;
+  if (match.popularity >= 0.8) bonus += 3;
+  else if (match.popularity >= 0.5) bonus += 2;
+
+  if (match.stats_total_tips >= 50) bonus += 4;
+  else if (match.stats_total_tips >= 20) bonus += 3;
+  else if (match.stats_total_tips >= 5) bonus += 1;
+
+  if (match.stats_total_photos >= 30) bonus += 3;
+  else if (match.stats_total_photos >= 10) bonus += 2;
 
   return bonus;
+}
+
+export function calculateCrossSourceBonus(
+  googleRating: number | undefined,
+  googleReviewCount: number | undefined,
+  match: FoursquareMatch | null,
+): number {
+  if (!match) return 0;
+  const gRating = googleRating ?? 0;
+  const gCount = googleReviewCount ?? 0;
+  const fRating = match.rating;
+
+  const googleIsStrong = gRating >= 4.2 && gCount >= 20;
+  const foursquareIsStrong =
+    fRating !== undefined && fRating >= 7.0 && match.stats_total_tips >= 5;
+
+  if (googleIsStrong && foursquareIsStrong) return 10;
+
+  const googleIsDecent = gRating >= 3.8 && gCount >= 10;
+  const foursquareIsDecent =
+    fRating !== undefined && fRating >= 6.0 && match.popularity >= 0.3;
+
+  if (googleIsDecent && foursquareIsDecent) return 5;
+
+  return 0;
 }

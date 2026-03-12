@@ -78,8 +78,9 @@ Google Places Nearby Search
   └────────────────────────────────────────────────────┘
         │
         ▼
-  calculateKidScore() (2nd pass) ← adds foursquare_bonus (up to +15)
-                                     and ai_review_bonus (up to +25)
+  calculateKidScore() (2nd pass) ← adds foursquare_bonus (up to +15),
+                                     cross_source_bonus (+5 or +10),
+                                     and AI analysis merged into review_bonus
         │
         ▼
   sortResults()                ← kidScore | distance | rating
@@ -114,8 +115,8 @@ Results from Foursquare and OpenAI are cached per place_id in the `enrichment_ca
 | rating_bonus | Google rating ≥ 4.2 with ≥ 20 reviews | +10 |
 | proximity_bonus | Within 1 km of search origin | +10 |
 | review_bonus | Tier 1/Tier 2 keyword analysis of Google reviews | variable |
-| foursquare_bonus | Foursquare rating + popularity cross-reference | up to +15 |
-| ai_review_bonus | OpenAI analysis of review texts for family signals | up to +25 |
+| foursquare_bonus | Foursquare rating, tips, photos, popularity | up to +15 |
+| cross_source_bonus | Google + Foursquare mutual quality confirmation | +5 or +10 |
 
 ### Request body
 
@@ -158,9 +159,9 @@ Supported `sortBy` values: `kidScore` (default), `distance`, `rating`.
         "cadeirao_bonus": 0,
         "rating_bonus": 10,
         "proximity_bonus": 5,
-        "review_bonus": 0,
+        "review_bonus": 37,
         "foursquare_bonus": 7,
-        "ai_review_bonus": 12
+        "cross_source_bonus": 10
       },
       "distance_meters": 3821
     }

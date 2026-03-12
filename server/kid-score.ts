@@ -49,7 +49,7 @@ export type KidScoreBreakdown = {
   proximity_bonus: number;
   review_bonus: number;
   foursquare_bonus: number;
-  ai_review_bonus: number;
+  cross_source_bonus: number;
 };
 
 export type PlaceWithScore = {
@@ -527,7 +527,7 @@ export function calculateKidScore(
   originLng: number,
   kidFlags: KidFlags = {},
   reviewTexts: string[] = [],
-  enrichment: { foursquareBonus?: number; aiReviewBonus?: number } = {},
+  enrichment: { foursquareBonus?: number; aiReviewBonus?: number; crossSourceBonus?: number } = {},
 ): PlaceWithScore {
   const breakdown: KidScoreBreakdown = {
     type_bonus: 0,
@@ -538,7 +538,7 @@ export function calculateKidScore(
     proximity_bonus: 0,
     review_bonus: 0,
     foursquare_bonus: 0,
-    ai_review_bonus: 0,
+    cross_source_bonus: 0,
   };
 
   // 1. Type bonus (+40 for playground/amusement_center)
@@ -572,11 +572,14 @@ export function calculateKidScore(
   const reviewAnalysis = analyseReviews(reviewTexts);
   breakdown.review_bonus = calculateReviewBonus(reviewAnalysis);
 
-  // 5b. Foursquare cross-reference bonus
+  // 5b. Merge AI review analysis into review_bonus
+  breakdown.review_bonus += enrichment.aiReviewBonus ?? 0;
+
+  // 5c. Foursquare data bonus (rating, tips, photos, popularity)
   breakdown.foursquare_bonus = enrichment.foursquareBonus ?? 0;
 
-  // 5c. AI review analysis bonus
-  breakdown.ai_review_bonus = enrichment.aiReviewBonus ?? 0;
+  // 5d. Cross-source reliability bonus (Google + Foursquare both confirm quality)
+  breakdown.cross_source_bonus = enrichment.crossSourceBonus ?? 0;
 
   // 6. Determine visible family_highlight (Tier 1 only — specific infrastructure).
   //    Tier 1 review signal takes priority; type auto-highlight is the fallback
@@ -605,7 +608,7 @@ export function calculateKidScore(
     breakdown.proximity_bonus +
     breakdown.review_bonus +
     breakdown.foursquare_bonus +
-    breakdown.ai_review_bonus;
+    breakdown.cross_source_bonus;
 
   return {
     ...place,
