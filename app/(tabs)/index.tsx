@@ -9,7 +9,7 @@ import {
   Platform,
 } from "react-native";
 import { Image } from "expo-image";
-import { router, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,6 +22,7 @@ import {
   getPhotoUrl,
   type PlaceWithScore,
 } from "@/lib/api";
+import { usePickedLocation } from "@/lib/picked-location-context";
 
 type UserLocation = { lat: number; lng: number };
 type TypeFilter = "Todos" | "Restaurantes" | "Parques";
@@ -114,11 +115,7 @@ function PlaceCard({
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{
-    pickedLat?: string;
-    pickedLng?: string;
-    pickedLabel?: string;
-  }>();
+  const { pickedLocation } = usePickedLocation();
 
   const [results, setResults] = useState<PlaceWithScore[]>([]);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
@@ -201,14 +198,11 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    const lat = params.pickedLat ? parseFloat(params.pickedLat) : null;
-    const lng = params.pickedLng ? parseFloat(params.pickedLng) : null;
-    const label = params.pickedLabel ?? undefined;
-    if (lat != null && lng != null) {
-      setActiveLabel(label ?? null);
-      doSearch(lat, lng, label);
+    if (pickedLocation) {
+      setActiveLabel(pickedLocation.label);
+      doSearch(pickedLocation.lat, pickedLocation.lng, pickedLocation.label);
     }
-  }, [params.pickedLat, params.pickedLng, params.pickedLabel]);
+  }, [pickedLocation]);
 
   const openFiltros = useCallback(() => {
     router.push({

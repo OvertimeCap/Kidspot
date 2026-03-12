@@ -13,6 +13,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { getApiUrl } from "@/lib/query-client";
+import { usePickedLocation } from "@/lib/picked-location-context";
 import Colors from "@/constants/colors";
 
 type Suggestion = { place_id: string; description: string };
@@ -51,6 +52,7 @@ export default function FiltrosSheet() {
   const params = useLocalSearchParams<{ lat?: string; lng?: string }>();
   const originLat = params.lat ? parseFloat(params.lat) : undefined;
   const originLng = params.lng ? parseFloat(params.lng) : undefined;
+  const { setPickedLocation } = usePickedLocation();
 
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -88,12 +90,8 @@ export default function FiltrosSheet() {
     setSelecting(true);
     try {
       const geo = await geocodeSuggestion(suggestion.place_id);
-      router.dismissAll();
-      router.setParams({
-        pickedLat: String(geo.lat),
-        pickedLng: String(geo.lng),
-        pickedLabel: geo.label,
-      });
+      setPickedLocation(geo.lat, geo.lng, geo.label);
+      router.back();
     } catch {
     } finally {
       setSelecting(false);
