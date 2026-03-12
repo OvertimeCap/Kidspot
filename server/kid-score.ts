@@ -185,13 +185,16 @@ export const BLOCK_KEYWORDS = [
 // ─── Family review keywords ───────────────────────────────────────────────────
 
 /**
- * Priority-ordered list of kid/family keywords to search for in Google Places
- * reviews. The first match found becomes the `family_highlight` label.
+ * TIER 1 — Infraestrutura infantil específica
+ *
+ * Matches generate a visible `family_highlight` tag on the card AND a high
+ * review_bonus in the kid_score. Places with Tier 1 evidence always appear
+ * before Tier 2 in the sorted results.
  *
  * Each entry: [keyword to match (normalised), human-readable label]
  */
-export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
-  // ── Português ────────────────────────────────────────────────────
+export const TIER1_KEYWORDS: Array<[string, string]> = [
+  // ── Português ──────────────────────────────────────────────────
   ["brinquedoteca", "Brinquedoteca"],
   ["parquinho", "Parquinho"],
   ["playground", "Playground"],
@@ -199,16 +202,15 @@ export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
   ["espaco kids", "Espaço Kids"],
   ["monitora", "Monitores infantis"],
   ["monitor infantil", "Monitores infantis"],
-  ["fralda", "Fraldário"],
+  ["fraldario", "Fraldário"],
   ["trocador", "Fraldário"],
   ["menu infantil", "Menu infantil"],
   ["cardapio infantil", "Menu infantil"],
   ["piscina infantil", "Piscina infantil"],
-  ["crianca", "Ambiente familiar"],
-  ["infantil", "Ambiente familiar"],
-  ["familia", "Ambiente familiar"],
-  ["kids", "Ambiente Kids"],
-  // ── Inglês (reviews frequentes no Google Brasil) ─────────────────
+  ["pula pula", "Área Kids"],
+  ["toboga", "Área Kids"],
+  ["escorregador", "Área Kids"],
+  // ── Inglês ─────────────────────────────────────────────────────
   ["playroom", "Brinquedoteca"],
   ["kids area", "Área Kids"],
   ["kids room", "Área Kids"],
@@ -217,80 +219,135 @@ export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
   ["kids corner", "Área Kids"],
   ["kids menu", "Menu infantil"],
   ["children menu", "Menu infantil"],
-  ["child friendly", "Ambiente familiar"],
-  ["family friendly", "Ambiente familiar"],
-  ["kid friendly", "Ambiente familiar"],
-  ["children welcome", "Ambiente familiar"],
-  ["kids welcome", "Ambiente familiar"],
   ["diaper", "Fraldário"],
   ["changing table", "Fraldário"],
-  ["toddler", "Ambiente familiar"],
-  ["stroller", "Ambiente familiar"],
+  ["ball pit", "Área Kids"],
+  ["soft play", "Área Kids"],
+];
+
+/**
+ * TIER 2 — Sinal familiar genérico
+ *
+ * Matches contribute a small review_bonus to the kid_score but do NOT generate
+ * a visible `family_highlight` tag. They help break ties without poluir o card
+ * com tags inespecíficas.
+ *
+ * Each entry: [keyword to match (normalised), human-readable label]
+ */
+export const TIER2_KEYWORDS: Array<[string, string]> = [
+  // ── Português ──────────────────────────────────────────────────
+  ["crianca", "Família"],
+  ["infantil", "Família"],
+  ["familia", "Família"],
+  ["fralda", "Família"],
+  // ── Inglês ─────────────────────────────────────────────────────
+  ["child friendly", "Família"],
+  ["family friendly", "Família"],
+  ["kid friendly", "Família"],
+  ["children welcome", "Família"],
+  ["kids welcome", "Família"],
+  ["toddler", "Família"],
+  ["stroller", "Família"],
+  ["kids", "Família"],
+];
+
+/**
+ * FAMILY_REVIEW_KEYWORD_MAP — kept for backward compatibility with
+ * `extractFamilyHighlight`. Combines Tier 1 + Tier 2 in priority order.
+ */
+export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
+  ...TIER1_KEYWORDS,
+  ...TIER2_KEYWORDS,
 ];
 
 export type ReviewAnalysis = {
-  /** Human-readable label of the highest-priority keyword found (undefined = none found) */
-  highlight: string | undefined;
-  /** Number of individual reviews that contain at least one family keyword */
-  reviewsWithKeyword: number;
-  /** Number of distinct keyword labels found across all reviews */
-  distinctKeywords: number;
+  /** Tier 1 label (infraestrutura infantil) — shown as visible card tag */
+  tier1Highlight: string | undefined;
+  /** Number of reviews containing at least one Tier 1 keyword */
+  tier1ReviewsCount: number;
+  /** Number of distinct Tier 1 labels found across all reviews */
+  tier1DistinctLabels: number;
+  /** Number of reviews containing at least one Tier 2 keyword (no Tier 1) */
+  tier2ReviewsCount: number;
+  /** Number of distinct Tier 2 labels found across all reviews */
+  tier2DistinctLabels: number;
 };
 
 /**
- * analyseReviews – scans each review independently and returns:
- *   - `highlight`         : label of the first (highest-priority) keyword found
- *   - `reviewsWithKeyword`: count of reviews that mention at least one family term
- *   - `distinctKeywords`  : count of distinct keyword labels across all reviews
+ * analyseReviews – scans each review text independently against both tiers.
  *
- * Used by calculateReviewBonus and calculateKidScore.
+ * Tier 1 (specific child infrastructure): brinquedoteca, playground, área
+ * kids, fraldário, menu infantil, etc. — generates visible tag + high bonus.
+ *
+ * Tier 2 (generic family signal): criança, infantil, family friendly, etc. —
+ * contributes a small bonus only, no visible tag.
  */
 export function analyseReviews(reviewTexts: string[]): ReviewAnalysis {
-  let highlight: string | undefined;
-  let reviewsWithKeyword = 0;
-  const foundLabels = new Set<string>();
+  let tier1Highlight: string | undefined;
+  let tier1ReviewsCount = 0;
+  let tier2ReviewsCount = 0;
+  const tier1Labels = new Set<string>();
+  const tier2Labels = new Set<string>();
 
   for (const text of reviewTexts) {
     const norm = normalise(text);
-    let reviewHasKeyword = false;
+    let hasTier1 = false;
+    let hasTier2 = false;
 
-    for (const [kw, label] of FAMILY_REVIEW_KEYWORD_MAP) {
+    for (const [kw, label] of TIER1_KEYWORDS) {
       if (norm.includes(normalise(kw))) {
-        reviewHasKeyword = true;
-        foundLabels.add(label);
-        // Keep the highest-priority highlight (first match wins globally)
-        if (!highlight) highlight = label;
+        hasTier1 = true;
+        tier1Labels.add(label);
+        if (!tier1Highlight) tier1Highlight = label;
       }
     }
 
-    if (reviewHasKeyword) reviewsWithKeyword++;
+    if (!hasTier1) {
+      for (const [kw, label] of TIER2_KEYWORDS) {
+        if (norm.includes(normalise(kw))) {
+          hasTier2 = true;
+          tier2Labels.add(label);
+        }
+      }
+    }
+
+    if (hasTier1) tier1ReviewsCount++;
+    else if (hasTier2) tier2ReviewsCount++;
   }
 
-  return { highlight, reviewsWithKeyword, distinctKeywords: foundLabels.size };
+  return {
+    tier1Highlight,
+    tier1ReviewsCount,
+    tier1DistinctLabels: tier1Labels.size,
+    tier2ReviewsCount,
+    tier2DistinctLabels: tier2Labels.size,
+  };
 }
 
 /**
- * calculateReviewBonus – graduated scoring formula based on review analysis.
+ * calculateReviewBonus – graduated scoring formula with tier weighting.
  *
- *   bonus = (reviewsWithKeyword × 10) + (distinctKeywords × 5)
+ * Tier 1 (specific infrastructure) contributes much more than Tier 2:
+ *   Tier 1: reviewsCount × 15 + distinctLabels × 10
+ *   Tier 2: reviewsCount ×  3 + distinctLabels ×  2
  *
  * Examples:
- *   1 review, 1 keyword label  → 10 + 5  = 15
- *   3 reviews, 2 keyword labels → 30 + 10 = 40
- *   5 reviews, 4 keyword labels → 50 + 20 = 70
- *
- * Maximum possible (5 reviews, all distinct labels) is capped at 75.
+ *   1 Tier-1 review, 1 label  → 15 + 10 = 25
+ *   3 Tier-1 reviews, 2 labels → 45 + 20 = 65
+ *   0 Tier-1, 3 Tier-2 reviews → 9 + 4 = 13
  */
 export function calculateReviewBonus(analysis: ReviewAnalysis): number {
-  return (analysis.reviewsWithKeyword * 10) + (analysis.distinctKeywords * 5);
+  const tier1 = (analysis.tier1ReviewsCount * 15) + (analysis.tier1DistinctLabels * 10);
+  const tier2 = (analysis.tier2ReviewsCount * 3) + (analysis.tier2DistinctLabels * 2);
+  return tier1 + tier2;
 }
 
 /**
  * extractFamilyHighlight – kept for backward compatibility.
- * Returns the highest-priority label found across all review texts.
+ * Returns the Tier 1 highlight label found across all review texts.
  */
 export function extractFamilyHighlight(reviewTexts: string[]): string | undefined {
-  return analyseReviews(reviewTexts).highlight;
+  return analyseReviews(reviewTexts).tier1Highlight;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -506,30 +563,27 @@ export function calculateKidScore(
     breakdown.proximity_bonus = 10;
   }
 
-  // 5. Review-based graduated bonus
-  //    bonus = (reviewsWithKeyword × 10) + (distinctKeywords × 5)
-  //    Max achievable with Google's 5-review limit: 5×10 + N×5
+  // 5. Review-based graduated bonus (Tier 1 weighted much higher than Tier 2)
   const reviewAnalysis = analyseReviews(reviewTexts);
-  const reviewHighlight = reviewAnalysis.highlight;
   breakdown.review_bonus = calculateReviewBonus(reviewAnalysis);
 
-  // 6. Auto-highlight based on place type (fallback when reviews have no signal).
-  //    Reviews take priority; type is the safety net so every inherently
-  //    kid-friendly venue always shows a family tag to the user.
+  // 6. Determine visible family_highlight (Tier 1 only — specific infrastructure).
+  //    Tier 1 review signal takes priority; type auto-highlight is the fallback
+  //    for inherently kid-friendly venue types that may lack review coverage.
+  //    Only truly child-specific types get an auto-highlight — generic venues
+  //    (sports_club, community_center) are excluded to avoid false positives.
   const TYPE_AUTO_HIGHLIGHTS: Record<string, string> = {
     playground: "Playground",
     amusement_center: "Centro de diversões",
     amusement_park: "Parque de diversões",
     zoo: "Zoológico",
-    community_center: "Espaço comunitário",
-    sports_club: "Clube esportivo",
   };
   const typeHighlight = place.types
     .map((t) => TYPE_AUTO_HIGHLIGHTS[t])
     .find((h) => h !== undefined);
 
-  // Review signal wins; type-based is the fallback
-  const family_highlight = reviewHighlight ?? typeHighlight;
+  // Tier 1 review signal wins; type-based is the fallback
+  const family_highlight = reviewAnalysis.tier1Highlight ?? typeHighlight;
 
   const kid_score =
     breakdown.type_bonus +
