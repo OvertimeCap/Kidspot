@@ -19,6 +19,7 @@ export type FoursquareMatch = {
   categories: string[];
   stats_total_photos: number;
   stats_total_tips: number;
+  stats_total_ratings: number;
 };
 
 async function fetchWithTimeout(
@@ -142,7 +143,7 @@ export async function searchFoursquareNearby(
       rating?: number;
       popularity?: number;
       categories?: Array<{ name: string }>;
-      stats?: { total_photos?: number; total_tips?: number };
+      stats?: { total_photos?: number; total_tips?: number; total_ratings?: number };
     }>;
   };
 
@@ -154,18 +155,16 @@ export async function searchFoursquareNearby(
     categories: (r.categories ?? []).map((c) => c.name),
     stats_total_photos: r.stats?.total_photos ?? 0,
     stats_total_tips: r.stats?.total_tips ?? 0,
+    stats_total_ratings: r.stats?.total_ratings ?? 0,
   }));
 }
 
-export async function matchFoursquarePlace(
+async function fetchAndCacheFoursquare(
   placeName: string,
   lat: number,
   lng: number,
   placeId: string,
 ): Promise<FoursquareMatch | null> {
-  const cached = await getCachedEnrichment(placeId);
-  if (cached.hit) return cached.data;
-
   if (!FOURSQUARE_API_KEY) return null;
 
   const results = await searchFoursquareNearby(lat, lng, placeName, 500);
@@ -185,10 +184,26 @@ export async function matchFoursquarePlace(
   if (bestMatch) {
     await setCachedEnrichment(placeId, bestMatch);
   } else {
-    await setCachedEnrichment(placeId, { fsq_id: "", name: "", rating: undefined, popularity: 0, categories: [], stats_total_photos: 0, stats_total_tips: 0 });
+    await setCachedEnrichment(placeId, { fsq_id: "", name: "", rating: undefined, popularity: 0, categories: [], stats_total_photos: 0, stats_total_tips: 0, stats_total_ratings: 0 });
   }
 
   return bestMatch;
+}
+
+export async function matchFoursquarePlace(
+  placeName: string,
+  lat: number,
+  lng: number,
+  placeId: string,
+): Promise<FoursquareMatch | null> {
+  const cached = await getCachedEnrichment(placeId);
+  if (cached.hit) return cached.data;
+
+  fetchAndCacheFoursquare(placeName, lat, lng, placeId).catch((err) =>
+    console.error(`[Foursquare] background enrichment failed for ${placeId}:`, err),
+  );
+
+  return null;
 }
 
 export function calculateFoursquareBonus(match: FoursquareMatch | null): number {
@@ -205,12 +220,14 @@ export function calculateFoursquareBonus(match: FoursquareMatch | null): number 
   if (match.popularity >= 0.8) bonus += 3;
   else if (match.popularity >= 0.5) bonus += 2;
 
-  if (match.stats_total_tips >= 50) bonus += 4;
-  else if (match.stats_total_tips >= 20) bonus += 3;
-  else if (match.stats_total_tips >= 5) bonus += 1;
+  const reviewCount = match.stats_total_ratings + match.stats_total_tips;
+  if (reviewCount >= 100) bonus += 5;
+  else if (reviewCount >= 50) bonus += 4;
+  else if (reviewCount >= 20) bonus += 3;
+  else if (reviewCount >= 5) bonus += 1;
 
-  if (match.stats_total_photos >= 30) bonus += 3;
-  else if (match.stats_total_photos >= 10) bonus += 2;
+  if (match.stats_total_photos >= 30) bonus += 2;
+  else if (match.stats_total_photos >= 10) bonus += 1;
 
   return bonus;
 }

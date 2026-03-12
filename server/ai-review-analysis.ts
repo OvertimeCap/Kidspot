@@ -95,16 +95,11 @@ let activeRequests = 0;
 const MAX_CONCURRENT_AI = 5;
 const AI_REQUEST_TIMEOUT_MS = 10_000;
 
-export async function analyzeReviewsWithAI(
+async function fetchAndCacheAIAnalysis(
   placeId: string,
   placeName: string,
   reviewTexts: string[],
 ): Promise<AIFamilyAnalysis | null> {
-  if (reviewTexts.length === 0) return null;
-
-  const cached = await getCachedAnalysis(placeId);
-  if (cached.hit) return cached.data;
-
   const openai = getOpenAI();
   if (!openai) return null;
 
@@ -165,6 +160,23 @@ export async function analyzeReviewsWithAI(
   } finally {
     activeRequests--;
   }
+}
+
+export async function analyzeReviewsWithAI(
+  placeId: string,
+  placeName: string,
+  reviewTexts: string[],
+): Promise<AIFamilyAnalysis | null> {
+  if (reviewTexts.length === 0) return null;
+
+  const cached = await getCachedAnalysis(placeId);
+  if (cached.hit) return cached.data;
+
+  fetchAndCacheAIAnalysis(placeId, placeName, reviewTexts).catch((err) =>
+    console.error(`[AI] background analysis failed for ${placeId}:`, err),
+  );
+
+  return null;
 }
 
 export function calculateAIReviewBonus(analysis: AIFamilyAnalysis | null): number {
