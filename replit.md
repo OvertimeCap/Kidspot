@@ -7,7 +7,7 @@ A mobile app (Expo + Express) that helps families find kid-friendly places nearb
 - **Frontend**: Expo (React Native) with Expo Router, `@tanstack/react-query`, TypeScript
 - **Backend**: Express + TypeScript (`tsx` dev server on port 5000)
 - **Database**: PostgreSQL via Drizzle ORM
-- **External API**: Google Places (Nearby Search, Place Details, Photo proxy)
+- **External APIs**: Google Places, Foursquare Places, OpenAI (review analysis)
 
 ## Key directories
 
@@ -16,12 +16,14 @@ app/            Expo Router screens
 components/     Shared React Native components
 lib/            Client-side API helpers and query client
 server/         Express backend
-  google-places.ts   Google Places fetching + searchPlaces orchestrator
-  kid-score.ts       KidScore scoring, filtering, sorting
-  routes.ts          API route definitions
-  storage.ts         Drizzle DB access layer
+  google-places.ts       Google Places fetching + searchPlaces orchestrator
+  kid-score.ts           KidScore scoring, filtering, sorting
+  foursquare.ts          Foursquare Places API integration + caching
+  ai-review-analysis.ts  OpenAI-powered review analysis for family signals
+  routes.ts              API route definitions
+  storage.ts             Drizzle DB access layer
 shared/
-  schema.ts          Drizzle schema + Zod types (places, reviews, favorites)
+  schema.ts          Drizzle schema + Zod types (places, reviews, favorites, enrichment_cache)
 ```
 
 ## API routes
@@ -65,8 +67,19 @@ Google Places Nearby Search
   getAggregatedKidFlagsForPlaces() ← batch-reads crowd-sourced kid_flags from reviews
         │
         ▼
-  calculateKidScore()          ← type +40, espaco_kids +25, trocador +20,
+  calculateKidScore() (1st pass) ← type +40, espaco_kids +25, trocador +20,
                                    cadeirao +15, rating +10, proximity +10
+        │
+        ▼
+  ┌─── Enrichment (top 30 candidates, in parallel) ───┐
+  │  fetchPlaceReviews()      ← Google review texts    │
+  │  matchFoursquarePlace()   ← Foursquare rating/pop  │
+  │  analyzeReviewsWithAI()   ← OpenAI family analysis │
+  └────────────────────────────────────────────────────┘
+        │
+        ▼
+  calculateKidScore() (2nd pass) ← adds foursquare_bonus (up to +15)
+                                     and ai_review_bonus (up to +25)
         │
         ▼
   sortResults()                ← kidScore | distance | rating
@@ -75,6 +88,10 @@ Google Places Nearby Search
         ▼
   { places: PlaceWithScore[] }
 ```
+
+### Enrichment cache
+
+Results from Foursquare and OpenAI are cached per place_id in the `enrichment_cache` table for 7 days. This avoids redundant API calls and keeps response times fast for repeat searches.
 
 ### Kid filter constants (server/kid-score.ts)
 
@@ -85,6 +102,20 @@ Google Places Nearby Search
 **Auto-pass types (skip Layer 2):** playground, amusement_center, zoo, community_center, sports_club
 
 **Blocklist:** advocacia, contabilidade, cartório, oficina, consultoria, transportadora, indústria, fábrica, depósito, clínica, hospital, farmácia, posto, combustível, igreja, condomínio
+
+### KidScore breakdown
+
+| Bonus | Source | Max points |
+|-------|--------|-----------|
+| type_bonus | Premium kid types (playground, zoo, etc.) | +40 |
+| espaco_kids_bonus | Community review flag | +25 |
+| trocador_bonus | Community review flag | +20 |
+| cadeirao_bonus | Community review flag | +15 |
+| rating_bonus | Google rating ≥ 4.2 with ≥ 20 reviews | +10 |
+| proximity_bonus | Within 1 km of search origin | +10 |
+| review_bonus | Tier 1/Tier 2 keyword analysis of Google reviews | variable |
+| foursquare_bonus | Foursquare rating + popularity cross-reference | up to +15 |
+| ai_review_bonus | OpenAI analysis of review texts for family signals | up to +25 |
 
 ### Request body
 
@@ -126,7 +157,10 @@ Supported `sortBy` values: `kidScore` (default), `distance`, `rating`.
         "trocador_bonus": 20,
         "cadeirao_bonus": 0,
         "rating_bonus": 10,
-        "proximity_bonus": 5
+        "proximity_bonus": 5,
+        "review_bonus": 0,
+        "foursquare_bonus": 7,
+        "ai_review_bonus": 12
       },
       "distance_meters": 3821
     }
@@ -140,3 +174,5 @@ Supported `sortBy` values: `kidScore` (default), `distance`, `rating`.
 |----------|----------|-------------|
 | GOOGLE_PLACES_API_KEY | Yes | Google Places API key |
 | DATABASE_URL | Yes | PostgreSQL connection string |
+| FOURSQUARE_API_KEY | No | Foursquare Places API key (enrichment) |
+| OPENAI_API_KEY | No | OpenAI API key (AI review analysis) |

@@ -8,6 +8,8 @@ import {
   type PlaceWithScore,
 } from "./kid-score";
 import { getAggregatedKidFlagsForPlaces, upsertPlace } from "./storage";
+import { matchFoursquarePlace, calculateFoursquareBonus } from "./foursquare";
+import { analyzeReviewsWithAI, calculateAIReviewBonus } from "./ai-review-analysis";
 
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
@@ -473,33 +475,77 @@ export async function searchPlaces(
   );
   const sortedFirstPass = sortResults(firstPass, sortBy);
 
-  // 8. Fetch Google reviews for the top N results in parallel
-  //    Reviews are used only for family-highlight extraction and review_bonus.
-  //    We cap this to REVIEW_ENRICH_TOP_N to keep latency manageable.
+  // 8. Fetch Google reviews + enrichment for the top N results in parallel
+  //    For non-kidScore sorts (distance/rating), skip Foursquare and AI enrichment
+  //    since those bonuses don't affect the ranking anyway.
   const topCandidates = sortedFirstPass.slice(0, REVIEW_ENRICH_TOP_N);
   const restCandidates = sortedFirstPass.slice(REVIEW_ENRICH_TOP_N);
 
-  const reviewResults = await Promise.allSettled(
-    topCandidates.map((p) => fetchPlaceReviews(p.place_id)),
+  const topRawPlaces = raw.filter((p) =>
+    topCandidates.some((tc) => tc.place_id === p.place_id),
   );
+
+  const useEnrichment = sortBy === "kidScore";
+
+  const [reviewResults, foursquareResults] = await Promise.all([
+    Promise.allSettled(
+      topCandidates.map((p) => fetchPlaceReviews(p.place_id)),
+    ),
+    useEnrichment
+      ? Promise.allSettled(
+          topRawPlaces.map((p) =>
+            matchFoursquarePlace(p.name, p.location.lat, p.location.lng, p.place_id),
+          ),
+        )
+      : Promise.resolve(topRawPlaces.map(() => ({ status: "fulfilled" as const, value: null }))),
+  ]);
+
   const reviewsMap = new Map<string, string[]>();
   topCandidates.forEach((p, i) => {
     const r = reviewResults[i];
     reviewsMap.set(p.place_id, r.status === "fulfilled" ? r.value : []);
   });
 
-  // 9. Re-score top candidates with review texts
-  const enrichedTop = raw
-    .filter((p) => reviewsMap.has(p.place_id))
-    .map((p) =>
-      calculateKidScore(
-        p,
-        latitude,
-        longitude,
-        kidFlagsMap.get(p.place_id) ?? {},
-        reviewsMap.get(p.place_id) ?? [],
+  const foursquareMap = new Map<string, number>();
+  topRawPlaces.forEach((p, i) => {
+    const r = foursquareResults[i];
+    const match = r.status === "fulfilled" ? r.value : null;
+    foursquareMap.set(p.place_id, calculateFoursquareBonus(match));
+  });
+
+  // 8b. Run AI review analysis in parallel (only for kidScore sort)
+  const aiMap = new Map<string, number>();
+  if (useEnrichment) {
+    const placesWithReviews = topRawPlaces.filter(
+      (p) => (reviewsMap.get(p.place_id)?.length ?? 0) > 0,
+    );
+    const aiResults = await Promise.allSettled(
+      placesWithReviews.map((p) =>
+        analyzeReviewsWithAI(p.place_id, p.name, reviewsMap.get(p.place_id) ?? []),
       ),
     );
+
+    placesWithReviews.forEach((p, i) => {
+      const r = aiResults[i];
+      const analysis = r.status === "fulfilled" ? r.value : null;
+      aiMap.set(p.place_id, calculateAIReviewBonus(analysis));
+    });
+  }
+
+  // 9. Re-score top candidates with review texts + enrichment data
+  const enrichedTop = topRawPlaces.map((p) =>
+    calculateKidScore(
+      p,
+      latitude,
+      longitude,
+      kidFlagsMap.get(p.place_id) ?? {},
+      reviewsMap.get(p.place_id) ?? [],
+      {
+        foursquareBonus: foursquareMap.get(p.place_id) ?? 0,
+        aiReviewBonus: aiMap.get(p.place_id) ?? 0,
+      },
+    ),
+  );
 
   // 10. Merge enriched top + rest, then sort and return
   const allScored = [...enrichedTop, ...restCandidates];

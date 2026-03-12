@@ -78,5 +78,19 @@ export type InsertPlace = z.infer<typeof insertPlaceSchema>;
 export type Review = typeof reviews.$inferSelect;
 export type InsertReview = z.infer<typeof insertReviewSchema>;
 
+export const enrichmentCache = pgTable("enrichment_cache", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  place_id: text("place_id").notNull(),
+  source: text("source").notNull(),
+  data: jsonb("data").notNull(),
+  expires_at: timestamp("expires_at").notNull(),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [unique("enrichment_cache_place_source_unique").on(table.place_id, table.source)]);
+
+export type EnrichmentCache = typeof enrichmentCache.$inferSelect;
+export type InsertEnrichmentCache = typeof enrichmentCache.$inferInsert;
+
 export type Favorite = typeof favorites.$inferSelect;
 export type InsertFavorite = z.infer<typeof insertFavoriteSchema>;
