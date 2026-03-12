@@ -65,6 +65,7 @@ export type KidScoreBreakdown = {
   cadeirao_bonus: number;
   rating_bonus: number;
   proximity_bonus: number;
+  review_bonus: number;
 };
 
 export type SearchParams = {
@@ -93,6 +94,7 @@ export type PlaceWithScore = {
   kid_score: number;
   kid_score_breakdown: KidScoreBreakdown;
   distance_meters?: number;
+  family_highlight?: string;
 };
 
 export function getPhotoUrl(photoReference: string, maxwidth = 400): string {

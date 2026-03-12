@@ -232,6 +232,54 @@ export async function searchPlacesNearby(
   return deduplicateAndSort(all);
 }
 
+// ─── Review fetching ──────────────────────────────────────────────────────────
+
+const REVIEW_FETCH_TIMEOUT_MS = 4_000;
+const REVIEW_ENRICH_TOP_N = 15;
+
+/**
+ * fetchPlaceReviews
+ *
+ * Fetches only the `reviews` field from the Google Places Details API for a
+ * single place. Returns an array of review text strings (up to 5, as Google
+ * provides). Returns an empty array on any error.
+ */
+export async function fetchPlaceReviews(placeId: string): Promise<string[]> {
+  if (!GOOGLE_PLACES_API_KEY) return [];
+
+  const qs = new URLSearchParams({
+    place_id: placeId,
+    fields: "reviews",
+    key: GOOGLE_PLACES_API_KEY,
+    language: "pt-BR",
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REVIEW_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${PLACES_BASE}/details/json?${qs.toString()}`, {
+      signal: controller.signal,
+    });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      result?: { reviews?: Array<{ text?: string; original_language?: string }> };
+      status: string;
+    };
+
+    if (data.status !== "OK" || !data.result?.reviews) return [];
+
+    return data.result.reviews
+      .map((r) => r.text ?? "")
+      .filter((t) => t.length > 0);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── New structured search API ────────────────────────────────────────────────
 
 export type FetchGooglePlacesParams = {
@@ -399,13 +447,43 @@ export async function searchPlaces(
   // 6. Batch-fetch community kid-flags from our reviews DB
   const kidFlagsMap = await getAggregatedKidFlagsForPlaces(raw.map((p) => p.place_id));
 
-  // 7. Score each place
-  const scored = raw.map((p) =>
+  // 7. First-pass score (without reviews) to identify top candidates
+  const firstPass = raw.map((p) =>
     calculateKidScore(p, latitude, longitude, kidFlagsMap.get(p.place_id) ?? {}),
   );
+  const sortedFirstPass = sortResults(firstPass, sortBy);
 
-  // 8. Sort and return
-  return sortResults(scored, sortBy);
+  // 8. Fetch Google reviews for the top N results in parallel
+  //    Reviews are used only for family-highlight extraction and review_bonus.
+  //    We cap this to REVIEW_ENRICH_TOP_N to keep latency manageable.
+  const topCandidates = sortedFirstPass.slice(0, REVIEW_ENRICH_TOP_N);
+  const restCandidates = sortedFirstPass.slice(REVIEW_ENRICH_TOP_N);
+
+  const reviewResults = await Promise.allSettled(
+    topCandidates.map((p) => fetchPlaceReviews(p.place_id)),
+  );
+  const reviewsMap = new Map<string, string[]>();
+  topCandidates.forEach((p, i) => {
+    const r = reviewResults[i];
+    reviewsMap.set(p.place_id, r.status === "fulfilled" ? r.value : []);
+  });
+
+  // 9. Re-score top candidates with review texts
+  const enrichedTop = raw
+    .filter((p) => reviewsMap.has(p.place_id))
+    .map((p) =>
+      calculateKidScore(
+        p,
+        latitude,
+        longitude,
+        kidFlagsMap.get(p.place_id) ?? {},
+        reviewsMap.get(p.place_id) ?? [],
+      ),
+    );
+
+  // 10. Merge enriched top + rest, then sort and return
+  const allScored = [...enrichedTop, ...restCandidates];
+  return sortResults(allScored, sortBy);
 }
 
 // ─── Autocomplete & Geocode ───────────────────────────────────────────────────

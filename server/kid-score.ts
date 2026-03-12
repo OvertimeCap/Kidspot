@@ -47,6 +47,7 @@ export type KidScoreBreakdown = {
   cadeirao_bonus: number;
   rating_bonus: number;
   proximity_bonus: number;
+  review_bonus: number;
 };
 
 export type PlaceWithScore = {
@@ -62,6 +63,7 @@ export type PlaceWithScore = {
   kid_score: number;
   kid_score_breakdown: KidScoreBreakdown;
   distance_meters?: number;
+  family_highlight?: string;
 };
 
 // ─── Filter constants ─────────────────────────────────────────────────────────
@@ -179,6 +181,47 @@ export const BLOCK_KEYWORDS = [
   "condomínio",
   "condominio",
 ];
+
+// ─── Family review keywords ───────────────────────────────────────────────────
+
+/**
+ * Priority-ordered list of kid/family keywords to search for in Google Places
+ * reviews. The first match found becomes the `family_highlight` label.
+ *
+ * Each entry: [keyword to match (normalised), human-readable label]
+ */
+export const FAMILY_REVIEW_KEYWORD_MAP: Array<[string, string]> = [
+  ["brinquedoteca", "Brinquedoteca"],
+  ["parquinho", "Parquinho"],
+  ["playground", "Playground"],
+  ["area kids", "Área Kids"],
+  ["espaco kids", "Espaço Kids"],
+  ["monitora", "Monitores infantis"],
+  ["monitor infantil", "Monitores infantis"],
+  ["fralda", "Fraldário"],
+  ["trocador", "Fraldário"],
+  ["menu infantil", "Menu infantil"],
+  ["cardapio infantil", "Menu infantil"],
+  ["piscina infantil", "Piscina infantil"],
+  ["crianca", "Ambiente familiar"],
+  ["infantil", "Ambiente familiar"],
+  ["familia", "Ambiente familiar"],
+  ["kids", "Ambiente Kids"],
+];
+
+/**
+ * extractFamilyHighlight – scans an array of review texts for the first
+ * recognised family/kid keyword and returns a human-readable label.
+ *
+ * Returns `undefined` when no keyword is found.
+ */
+export function extractFamilyHighlight(reviewTexts: string[]): string | undefined {
+  const combined = reviewTexts.map((t) => normalise(t)).join(" ");
+  for (const [kw, label] of FAMILY_REVIEW_KEYWORD_MAP) {
+    if (combined.includes(normalise(kw))) return label;
+  }
+  return undefined;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -337,6 +380,7 @@ export function filterOpenNow<T extends { opening_hours?: { open_now?: boolean }
  * @param originLat    Search origin latitude  (used for proximity bonus)
  * @param originLng    Search origin longitude (used for proximity bonus)
  * @param kidFlags     Optional crowd-sourced flags from KidSpot reviews
+ * @param reviewTexts  Optional Google Places review texts for family-highlight extraction
  */
 export function calculateKidScore(
   place: {
@@ -353,6 +397,7 @@ export function calculateKidScore(
   originLat: number,
   originLng: number,
   kidFlags: KidFlags = {},
+  reviewTexts: string[] = [],
 ): PlaceWithScore {
   const breakdown: KidScoreBreakdown = {
     type_bonus: 0,
@@ -361,6 +406,7 @@ export function calculateKidScore(
     cadeirao_bonus: 0,
     rating_bonus: 0,
     proximity_bonus: 0,
+    review_bonus: 0,
   };
 
   // 1. Type bonus (+40 for playground/amusement_center)
@@ -390,19 +436,27 @@ export function calculateKidScore(
     breakdown.proximity_bonus = 10;
   }
 
+  // 5. Review-based family highlight (+20 if any family keyword found in reviews)
+  const family_highlight = extractFamilyHighlight(reviewTexts);
+  if (family_highlight) {
+    breakdown.review_bonus = 20;
+  }
+
   const kid_score =
     breakdown.type_bonus +
     breakdown.espaco_kids_bonus +
     breakdown.trocador_bonus +
     breakdown.cadeirao_bonus +
     breakdown.rating_bonus +
-    breakdown.proximity_bonus;
+    breakdown.proximity_bonus +
+    breakdown.review_bonus;
 
   return {
     ...place,
     kid_score,
     kid_score_breakdown: breakdown,
     distance_meters: Math.round(distanceMeters),
+    ...(family_highlight ? { family_highlight } : {}),
   };
 }
 

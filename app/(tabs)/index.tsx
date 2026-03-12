@@ -85,6 +85,13 @@ function PlaceCard({
           {place.name}
         </Text>
 
+        {place.family_highlight && (
+          <View style={styles.highlightRow}>
+            <Ionicons name="happy-outline" size={13} color={Colors.primary} />
+            <Text style={styles.highlightText}>{place.family_highlight} mencionado em avaliações</Text>
+          </View>
+        )}
+
         <View style={styles.metaRow}>
           {place.rating != null && (
             <View style={styles.ratingRow}>
@@ -572,6 +579,21 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: Colors.text,
     fontFamily: "Inter_700Bold",
+  },
+  highlightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#EEF4FF",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+  },
+  highlightText: {
+    fontSize: 11,
+    color: Colors.primary,
+    fontFamily: "Inter_500Medium",
   },
   metaRow: {
     flexDirection: "row",
