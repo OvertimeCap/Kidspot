@@ -23,22 +23,39 @@ server/         Express backend
   routes.ts              API route definitions
   storage.ts             Drizzle DB access layer
 shared/
-  schema.ts          Drizzle schema + Zod types (places, reviews, favorites, enrichment_cache)
+  schema.ts          Drizzle schema + Zod types (users, places, reviews, favorites, enrichment_cache)
+lib/
+  auth-context.tsx   AuthProvider + useAuth() hook (JWT persistence, login/register/logout)
 ```
+
+## Authentication
+
+JWT-based authentication with 4 user roles:
+- **admin** — Sócios e desenvolvedores
+- **colaborador** — Equipe de gestão
+- **parceiro** — Estabelecimentos com parceria contratual
+- **usuario** — Usuários finais (role padrão para novos cadastros)
+
+Auth state is stored in AsyncStorage (JWT token + user object). The `AuthProvider` in `app/_layout.tsx` manages the state. The token is injected in all API requests via `setAuthToken()` in `lib/query-client.ts`.
+
+New users register with role `usuario`. Roles `admin`, `colaborador`, and `parceiro` are assigned manually in the database by an admin.
 
 ## API routes
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/health | Health check |
-| GET | /api/kidspot/ping-db | DB connectivity check |
-| POST | /api/places/search | Main search endpoint (see below) |
-| GET | /api/places/details | Place details by place_id |
-| GET | /api/places/photo | Google photo proxy |
-| GET | /api/reviews | Reviews for a place |
-| POST | /api/reviews | Submit a review |
-| GET | /api/favorites | User's favorites |
-| POST | /api/favorites/toggle | Add/remove favorite |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | /api/health | — | Health check |
+| GET | /api/kidspot/ping-db | — | DB connectivity check |
+| POST | /api/auth/register | — | Register (email, password, name) |
+| POST | /api/auth/login | — | Login → JWT token |
+| GET | /api/auth/me | Required | Get current user info |
+| POST | /api/places/search | — | Main search endpoint (see below) |
+| GET | /api/places/details | — | Place details by place_id |
+| GET | /api/places/photo | — | Google photo proxy |
+| GET | /api/reviews | — | Reviews for a place |
+| POST | /api/reviews | Required | Submit a review |
+| GET | /api/favorites | Required | User's favorites |
+| POST | /api/favorites/toggle | Required | Add/remove favorite |
 
 ## POST /api/places/search
 
@@ -175,5 +192,6 @@ Supported `sortBy` values: `kidScore` (default), `distance`, `rating`.
 |----------|----------|-------------|
 | GOOGLE_PLACES_API_KEY | Yes | Google Places API key |
 | DATABASE_URL | Yes | PostgreSQL connection string |
+| JWT_SECRET | Yes (prod) | Secret key for signing JWT tokens (defaults to dev fallback) |
 | FOURSQUARE_API_KEY | No | Foursquare Places API key (enrichment) |
 | OPENAI_API_KEY | No | OpenAI API key (AI review analysis) |

@@ -4,13 +4,16 @@ import {
   placesKidspot,
   reviews,
   favorites,
+  users,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
   type Review,
   type Favorite,
+  type User,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
+import bcrypt from "bcryptjs";
 
 export async function upsertPlace(place: InsertPlace): Promise<PlaceKidspot> {
   const [row] = await db
@@ -106,4 +109,35 @@ export async function getAggregatedKidFlagsForPlaces(
   }
 
   return result;
+}
+
+export async function createUser(data: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<User> {
+  const password_hash = await bcrypt.hash(data.password, 10);
+  const [user] = await db
+    .insert(users)
+    .values({ name: data.name, email: data.email, password_hash })
+    .returning();
+  return user;
+}
+
+export async function findUserByEmail(email: string): Promise<User | null> {
+  const user = await db.query.users.findFirst({
+    where: eq(users.email, email.toLowerCase()),
+  });
+  return user ?? null;
+}
+
+export async function getUserById(id: string): Promise<User | null> {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, id),
+  });
+  return user ?? null;
+}
+
+export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(plain, hash);
 }

@@ -29,6 +29,7 @@ import {
   type Review,
   type KidFlags,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 const KID_FLAG_LABELS: Record<keyof KidFlags, string> = {
   trocador: "Trocador de fraldas",
@@ -149,6 +150,7 @@ export default function PlaceDetailsScreen() {
   const { place_id } = useLocalSearchParams<{ place_id: string }>();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
+  const { user } = useAuth();
 
   const [reviewRating, setReviewRating] = useState(0);
   const [kidFlags, setKidFlags] = useState<KidFlags>({ ...DEFAULT_FLAGS });
@@ -170,6 +172,7 @@ export default function PlaceDetailsScreen() {
   const { data: favorites } = useQuery({
     queryKey: ["/api/favorites"],
     queryFn: getFavorites,
+    enabled: !!user,
   });
 
   const isFavorited = favorites?.some((f) => f.place_id === place_id) ?? false;
@@ -180,6 +183,21 @@ export default function PlaceDetailsScreen() {
       qc.invalidateQueries({ queryKey: ["/api/favorites"] });
     },
   });
+
+  const handleFavPress = () => {
+    if (!user) {
+      Alert.alert(
+        "Login necessário",
+        "Faça login para salvar favoritos.",
+        [
+          { text: "Cancelar", style: "cancel" },
+          { text: "Fazer login", onPress: () => router.push("/login") },
+        ],
+      );
+      return;
+    }
+    favMutation.mutate();
+  };
 
   const handleDirections = () => {
     if (!place) return;
@@ -196,6 +214,17 @@ export default function PlaceDetailsScreen() {
   };
 
   const handleSubmitReview = async () => {
+    if (!user) {
+      Alert.alert(
+        "Login necessário",
+        "Faça login para enviar uma avaliação.",
+        [
+          { text: "Cancelar", style: "cancel" },
+          { text: "Fazer login", onPress: () => router.push("/login") },
+        ],
+      );
+      return;
+    }
     if (reviewRating === 0) {
       Alert.alert("Avaliação", "Selecione uma nota de 1 a 5 estrelas.");
       return;
@@ -280,7 +309,7 @@ export default function PlaceDetailsScreen() {
         </View>
         <Pressable
           style={({ pressed }) => [styles.favBtn, pressed && { opacity: 0.7 }]}
-          onPress={() => favMutation.mutate()}
+          onPress={handleFavPress}
           disabled={favMutation.isPending}
         >
           <Ionicons

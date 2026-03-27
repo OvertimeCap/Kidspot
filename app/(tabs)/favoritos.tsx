@@ -22,6 +22,7 @@ import {
   getPhotoUrl,
   type PlaceDetails,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 function FavoriteCard({
   placeId,
@@ -102,10 +103,12 @@ function FavoriteCard({
 export default function FavoritosScreen() {
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
+  const { user } = useAuth();
 
   const { data: favorites, isLoading, error, refetch } = useQuery({
     queryKey: ["/api/favorites"],
     queryFn: getFavorites,
+    enabled: !!user,
   });
 
   const removeMutation = useMutation({
@@ -117,6 +120,31 @@ export default function FavoritosScreen() {
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : 0;
+
+  if (!user) {
+    return (
+      <View style={[styles.container, { paddingTop: topPad }]}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Meus Favoritos</Text>
+          <Ionicons name="heart" size={24} color={Colors.primary} />
+        </View>
+        <View style={styles.centered}>
+          <Ionicons name="lock-closed-outline" size={64} color={Colors.border} />
+          <Text style={styles.emptyTitle}>Login necessário</Text>
+          <Text style={styles.emptySubtitle}>
+            Faça login para salvar e ver seus{"\n"}lugares favoritos
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.goSearchBtn, pressed && { opacity: 0.8 }]}
+            onPress={() => router.push("/login")}
+          >
+            <Ionicons name="log-in-outline" size={16} color="#fff" />
+            <Text style={styles.goSearchText}>Fazer login</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>

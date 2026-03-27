@@ -1,17 +1,26 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Response } from "express";
 import { createServer, type Server } from "node:http";
 import { z } from "zod";
 import { pool } from "./db";
 import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace } from "./google-places";
-import { createReview, getReviewsForPlace, toggleFavorite, getFavoritesForUser } from "./storage";
+import {
+  createReview,
+  getReviewsForPlace,
+  toggleFavorite,
+  getFavoritesForUser,
+  createUser,
+  findUserByEmail,
+  verifyPassword,
+} from "./storage";
 import { insertReviewSchema } from "@shared/schema";
+import { requireAuth, signToken, type AuthRequest } from "./auth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.get("/api/health", (_req: Request, res: Response) => {
+  app.get("/api/health", (_req: AuthRequest, res: Response) => {
     res.json({ ok: true });
   });
 
-  app.get("/api/kidspot/ping-db", async (_req: Request, res: Response) => {
+  app.get("/api/kidspot/ping-db", async (_req: AuthRequest, res: Response) => {
     try {
       await pool.query("SELECT 1");
       res.json({ db: true });
@@ -21,7 +30,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/places/photo", async (req: Request, res: Response) => {
+  /* ------------------------------------------------------------------ */
+  /* Auth routes                                                          */
+  /* ------------------------------------------------------------------ */
+
+  const registerSchema = z.object({
+    name: z.string().min(2),
+    email: z.string().email(),
+    password: z.string().min(6),
+  });
+
+  app.post("/api/auth/register", async (req: AuthRequest, res: Response) => {
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const { name, email, password } = parsed.data;
+
+    const existing = await findUserByEmail(email.toLowerCase());
+    if (existing) {
+      res.status(409).json({ error: "E-mail já cadastrado" });
+      return;
+    }
+
+    try {
+      const user = await createUser({ name, email: email.toLowerCase(), password });
+      const token = signToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+      res.status(201).json({
+        token,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      });
+    } catch (err) {
+      console.error("Register error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const loginSchema = z.object({
+    email: z.string().email(),
+    password: z.string().min(1),
+  });
+
+  app.post("/api/auth/login", async (req: AuthRequest, res: Response) => {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const { email, password } = parsed.data;
+
+    try {
+      const user = await findUserByEmail(email.toLowerCase());
+      if (!user) {
+        res.status(401).json({ error: "E-mail ou senha incorretos" });
+        return;
+      }
+
+      const valid = await verifyPassword(password, user.password_hash);
+      if (!valid) {
+        res.status(401).json({ error: "E-mail ou senha incorretos" });
+        return;
+      }
+
+      const token = signToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+      res.json({
+        token,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      });
+    } catch (err) {
+      console.error("Login error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/auth/me", requireAuth, (req: AuthRequest, res: Response) => {
+    res.json({ user: req.user });
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Places photo proxy                                                   */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/places/photo", async (req: AuthRequest, res: Response) => {
     const reference = req.query.reference as string;
     const maxwidth = (req.query.maxwidth as string) || "400";
 
@@ -50,52 +153,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  /**
-   * POST /api/places/search
-   *
-   * Discovers kid-friendly places near a coordinate using the Google Places
-   * Nearby Search API, scores each result with a KidScore, and returns them
-   * sorted by the caller's preferred strategy.
-   *
-   * Request body:
-   * {
-   *   "latitude": -23.5505,        // required – search origin latitude
-   *   "longitude": -46.6333,       // required – search origin longitude
-   *   "radius": 5000,              // metres, max 10 000
-   *   "establishmentType": "playground", // playground | park | amusement_center |
-   *                                       // restaurant | cafe | shopping_mall
-   *   "openNow": true,             // optional – filter to currently open places
-   *   "query": "espaço kids",      // optional – keyword refinement
-   *   "sortBy": "kidScore"         // optional – kidScore | distance | rating
-   * }
-   *
-   * Response:
-   * {
-   *   "places": [
-   *     {
-   *       "place_id": "ChIJ...",
-   *       "name": "Parque Ibirapuera",
-   *       "address": "Av. Pedro Álvares Cabral, São Paulo",
-   *       "location": { "lat": -23.5872, "lng": -46.6576 },
-   *       "rating": 4.7,
-   *       "user_ratings_total": 82340,
-   *       "types": ["park", "point_of_interest"],
-   *       "opening_hours": { "open_now": true },
-   *       "photos": [{ "photo_reference": "ATtYBwJ..." }],
-   *       "kid_score": 60,
-   *       "kid_score_breakdown": {
-   *         "type_bonus": 0,
-   *         "espaco_kids_bonus": 25,
-   *         "trocador_bonus": 20,
-   *         "cadeirao_bonus": 0,
-   *         "rating_bonus": 10,
-   *         "proximity_bonus": 5
-   *       },
-   *       "distance_meters": 3821
-   *     }
-   *   ]
-   * }
-   */
+  /* ------------------------------------------------------------------ */
+  /* Places search / details                                              */
+  /* ------------------------------------------------------------------ */
+
   const ESTABLISHMENT_TYPES = [
     "playground",
     "park",
@@ -128,7 +189,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       { message: "Provide establishmentType or establishmentTypes" },
     );
 
-  app.post("/api/places/search", async (req: Request, res: Response) => {
+  app.post("/api/places/search", async (req: AuthRequest, res: Response) => {
     const parsed = searchBodySchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
@@ -144,7 +205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/places/autocomplete", async (req: Request, res: Response) => {
+  app.get("/api/places/autocomplete", async (req: AuthRequest, res: Response) => {
     const input = (req.query.input as string) ?? "";
     const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
     const lng = req.query.lng ? parseFloat(req.query.lng as string) : undefined;
@@ -158,7 +219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/places/geocode", async (req: Request, res: Response) => {
+  app.get("/api/places/geocode", async (req: AuthRequest, res: Response) => {
     const placeId = req.query.place_id as string;
     if (!placeId) {
       res.status(400).json({ error: "place_id query parameter is required" });
@@ -174,7 +235,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/places/details", async (req: Request, res: Response) => {
+  app.get("/api/places/details", async (req: AuthRequest, res: Response) => {
     const placeId = req.query.place_id as string;
     if (!placeId) {
       res.status(400).json({ error: "place_id query parameter is required" });
@@ -190,7 +251,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/reviews", async (req: Request, res: Response) => {
+  /* ------------------------------------------------------------------ */
+  /* Reviews                                                              */
+  /* ------------------------------------------------------------------ */
+
+  app.post("/api/reviews", requireAuth, async (req: AuthRequest, res: Response) => {
     const parsed = insertReviewSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
@@ -206,7 +271,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/reviews", async (req: Request, res: Response) => {
+  app.get("/api/reviews", async (req: AuthRequest, res: Response) => {
     const placeId = req.query.place_id as string;
     if (!placeId) {
       res.status(400).json({ error: "place_id query parameter is required" });
@@ -222,22 +287,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  const toggleFavoriteSchema = z.object({
-    user_key: z.string().min(1),
-    place_id: z.string().min(1),
-  });
+  /* ------------------------------------------------------------------ */
+  /* Favorites (protected — require JWT)                                  */
+  /* ------------------------------------------------------------------ */
 
-  app.post("/api/favorites/toggle", async (req: Request, res: Response) => {
-    const parsed = toggleFavoriteSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
+  app.post("/api/favorites/toggle", requireAuth, async (req: AuthRequest, res: Response) => {
+    const placeId = req.body?.place_id as string | undefined;
+    if (!placeId) {
+      res.status(400).json({ error: "place_id is required" });
       return;
     }
 
-    const { user_key, place_id } = parsed.data;
+    const userKey = req.user!.userId;
 
     try {
-      const result = await toggleFavorite(user_key, place_id);
+      const result = await toggleFavorite(userKey, placeId);
       res.json(result);
     } catch (err) {
       console.error("Toggle favorite error:", err);
@@ -245,12 +309,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/favorites", async (req: Request, res: Response) => {
-    const userKey = req.query.user_key as string;
-    if (!userKey) {
-      res.status(400).json({ error: "user_key query parameter is required" });
-      return;
-    }
+  app.get("/api/favorites", requireAuth, async (req: AuthRequest, res: Response) => {
+    const userKey = req.user!.userId;
 
     try {
       const favList = await getFavoritesForUser(userKey);

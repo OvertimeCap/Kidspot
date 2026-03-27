@@ -18,6 +18,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: "heart", selected: "heart.fill" }} />
         <Label>Favoritos</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="perfil">
+        <Icon sf={{ default: "person", selected: "person.fill" }} />
+        <Label>Perfil</Label>
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
@@ -74,6 +78,15 @@ function ClassicTabLayout() {
           title: "Favoritos",
           tabBarIcon: ({ color }) => (
             <Ionicons name="heart" size={24} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="perfil"
+        options={{
+          title: "Perfil",
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="person" size={24} color={color} />
           ),
         }}
       />

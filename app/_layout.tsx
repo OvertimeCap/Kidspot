@@ -15,6 +15,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import Colors from "@/constants/colors";
 import { PickedLocationProvider } from "@/lib/picked-location-context";
+import { AuthProvider } from "@/lib/auth-context";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -40,6 +41,20 @@ function RootLayoutNav() {
           contentStyle: { backgroundColor: "#fff" },
         }}
       />
+      <Stack.Screen
+        name="login"
+        options={{
+          headerShown: false,
+          presentation: "modal",
+        }}
+      />
+      <Stack.Screen
+        name="cadastro"
+        options={{
+          headerShown: false,
+          presentation: "modal",
+        }}
+      />
     </Stack>
   );
 }
@@ -63,13 +78,15 @@ export default function RootLayout() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView>
-          <KeyboardProvider>
-            <PickedLocationProvider>
-              <RootLayoutNav />
-            </PickedLocationProvider>
-          </KeyboardProvider>
-        </GestureHandlerRootView>
+        <AuthProvider>
+          <GestureHandlerRootView>
+            <KeyboardProvider>
+              <PickedLocationProvider>
+                <RootLayoutNav />
+              </PickedLocationProvider>
+            </KeyboardProvider>
+          </GestureHandlerRootView>
+        </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   );

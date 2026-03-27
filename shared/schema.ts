@@ -4,6 +4,7 @@ import {
   integer,
   jsonb,
   numeric,
+  pgEnum,
   pgTable,
   text,
   timestamp,
@@ -12,6 +13,24 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+export const userRoleEnum = pgEnum("user_role", [
+  "admin",
+  "colaborador",
+  "parceiro",
+  "usuario",
+]);
+
+export const users = pgTable("users", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  password_hash: text("password_hash").notNull(),
+  role: userRoleEnum("role").notNull().default("usuario"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+});
 
 export const placesKidspot = pgTable("places_kidspot", {
   place_id: text("place_id").primaryKey(),
@@ -72,6 +91,14 @@ export const insertFavoriteSchema = createInsertSchema(favorites).omit({
   created_at: true,
 });
 
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true,
+  created_at: true,
+  password_hash: true,
+}).extend({
+  password: z.string().min(6),
+});
+
 export type PlaceKidspot = typeof placesKidspot.$inferSelect;
 export type InsertPlace = z.infer<typeof insertPlaceSchema>;
 
@@ -94,3 +121,6 @@ export type InsertEnrichmentCache = typeof enrichmentCache.$inferInsert;
 
 export type Favorite = typeof favorites.$inferSelect;
 export type InsertFavorite = z.infer<typeof insertFavoriteSchema>;
+
+export type User = typeof users.$inferSelect;
+export type UserRole = "admin" | "colaborador" | "parceiro" | "usuario";

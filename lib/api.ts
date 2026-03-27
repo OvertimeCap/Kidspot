@@ -1,7 +1,5 @@
 import { getApiUrl, apiRequest } from "@/lib/query-client";
 
-export const DEMO_USER_KEY = "demo-user";
-
 export type MinimalPlace = {
   place_id: string;
   name: string;
@@ -136,14 +134,13 @@ export async function createReview(review: {
 
 export async function toggleFavorite(placeId: string): Promise<{ added: boolean }> {
   const res = await apiRequest("POST", "/api/favorites/toggle", {
-    user_key: DEMO_USER_KEY,
     place_id: placeId,
   });
   return res.json();
 }
 
 export async function getFavorites(): Promise<FavoriteRow[]> {
-  const res = await apiRequest("GET", `/api/favorites?user_key=${DEMO_USER_KEY}`);
+  const res = await apiRequest("GET", "/api/favorites");
   const data = await res.json();
   return data.favorites ?? [];
 }
