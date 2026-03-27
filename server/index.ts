@@ -41,7 +41,7 @@ function setupCors(app: express.Application) {
         "Access-Control-Allow-Methods",
         "GET, POST, PUT, DELETE, OPTIONS",
       );
-      res.header("Access-Control-Allow-Headers", "Content-Type");
+      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
       res.header("Access-Control-Allow-Credentials", "true");
     }
 
@@ -84,7 +84,11 @@ function setupRequestLogging(app: express.Application) {
 
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        const isAuthRoute = path.startsWith("/api/auth/login") || path.startsWith("/api/auth/register");
+        const safeResponse = isAuthRoute
+          ? { ...capturedJsonResponse, token: capturedJsonResponse.token ? "[REDACTED]" : undefined }
+          : capturedJsonResponse;
+        logLine += ` :: ${JSON.stringify(safeResponse)}`;
       }
 
       if (logLine.length > 80) {
