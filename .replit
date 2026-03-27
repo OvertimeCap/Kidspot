@@ -77,3 +77,8 @@ args = "npm run expo:dev"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[userenv]
+
+[userenv.shared]
+EXPO_PUBLIC_GOOGLE_CLIENT_ID = "1088606725732-ki7spf932r16hbsqm3bsumb9pi3isktg.apps.googleusercontent.com"

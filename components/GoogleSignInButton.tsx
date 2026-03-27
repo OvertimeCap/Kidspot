@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
+import { makeRedirectUri } from "expo-auth-session";
 import { router } from "expo-router";
 import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
@@ -25,11 +26,20 @@ export default function GoogleSignInButton({
   const { loginWithGoogle } = useAuth();
   const [loading, setLoading] = useState(false);
 
-  const [, response, promptAsync] = Google.useAuthRequest({
-    webClientId: GOOGLE_CLIENT_ID,
-    iosClientId: GOOGLE_CLIENT_ID,
-    androidClientId: GOOGLE_CLIENT_ID,
+  const redirectUri = makeRedirectUri({
+    scheme: "myapp",
+    path: "/(tabs)",
+    preferLocalhost: Platform.OS === "web",
   });
+
+  const [, response, promptAsync] = Google.useAuthRequest(
+    {
+      webClientId: GOOGLE_CLIENT_ID,
+      iosClientId: GOOGLE_CLIENT_ID,
+      androidClientId: GOOGLE_CLIENT_ID,
+      redirectUri,
+    },
+  );
 
   useEffect(() => {
     if (response?.type !== "success") return;
@@ -50,7 +60,7 @@ export default function GoogleSignInButton({
   function handlePress() {
     if (!configured) {
       onError?.(
-        "Login com Google não configurado. Adicione EXPO_PUBLIC_GOOGLE_CLIENT_ID.",
+        "Login com Google não configurado. Verifique EXPO_PUBLIC_GOOGLE_CLIENT_ID.",
       );
       return;
     }
@@ -113,7 +123,6 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Platform.OS === "web" ? "transparent" : "transparent",
   },
   logoG: {
     fontSize: 17,
