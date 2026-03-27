@@ -40,17 +40,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const [savedToken, savedUser] = await Promise.all([
-          AsyncStorage.getItem(TOKEN_STORAGE_KEY),
-          AsyncStorage.getItem(USER_STORAGE_KEY),
-        ]);
-        if (savedToken && savedUser) {
-          setToken(savedToken);
-          setUser(JSON.parse(savedUser));
-          setAuthToken(savedToken);
+        const savedToken = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
+        if (!savedToken) return;
+
+        setAuthToken(savedToken);
+        const res = await apiRequest("GET", "/api/auth/me");
+        if (!res.ok) {
+          await Promise.all([
+            AsyncStorage.removeItem(TOKEN_STORAGE_KEY),
+            AsyncStorage.removeItem(USER_STORAGE_KEY),
+          ]);
+          setAuthToken(null);
+          return;
         }
+
+        const data = await res.json();
+        const payload = data.user as { userId: string; name: string; email: string; role: UserRole };
+        const validatedUser: AuthUser = {
+          id: payload.userId,
+          name: payload.name,
+          email: payload.email,
+          role: payload.role,
+        };
+        setToken(savedToken);
+        setUser(validatedUser);
+        await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(validatedUser));
       } catch {
-        // ignore storage errors
+        // ignore storage or network errors — user stays logged out
       } finally {
         setIsLoading(false);
       }
