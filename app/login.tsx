@@ -36,8 +36,8 @@ export default function LoginScreen() {
     try {
       await login(email.trim(), password);
       router.replace("/(tabs)");
-    } catch (err: any) {
-      const msg = err?.message ?? "";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
       if (msg.includes("401")) {
         setError("E-mail ou senha incorretos.");
       } else {

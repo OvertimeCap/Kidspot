@@ -30,8 +30,14 @@ export async function upsertPlace(place: InsertPlace): Promise<PlaceKidspot> {
   return existing!;
 }
 
-export async function createReview(review: InsertReview): Promise<Review> {
-  const [row] = await db.insert(reviews).values(review).returning();
+export async function createReview(
+  review: InsertReview,
+  userId: string,
+): Promise<Review> {
+  const [row] = await db
+    .insert(reviews)
+    .values({ ...review, user_id: userId })
+    .returning();
   return row;
 }
 
@@ -43,12 +49,12 @@ export async function getReviewsForPlace(placeId: string): Promise<Review[]> {
 }
 
 export async function toggleFavorite(
-  userKey: string,
+  userId: string,
   placeId: string,
 ): Promise<{ added: boolean }> {
   const existing = await db.query.favorites.findFirst({
     where: and(
-      eq(favorites.user_key, userKey),
+      eq(favorites.user_id, userId),
       eq(favorites.place_id, placeId),
     ),
   });
@@ -58,20 +64,20 @@ export async function toggleFavorite(
       .delete(favorites)
       .where(
         and(
-          eq(favorites.user_key, userKey),
+          eq(favorites.user_id, userId),
           eq(favorites.place_id, placeId),
         ),
       );
     return { added: false };
   }
 
-  await db.insert(favorites).values({ user_key: userKey, place_id: placeId });
+  await db.insert(favorites).values({ user_id: userId, place_id: placeId });
   return { added: true };
 }
 
-export async function getFavoritesForUser(userKey: string): Promise<Favorite[]> {
+export async function getFavoritesForUser(userId: string): Promise<Favorite[]> {
   return db.query.favorites.findMany({
-    where: eq(favorites.user_key, userKey),
+    where: eq(favorites.user_id, userId),
     orderBy: (f, { desc }) => [desc(f.created_at)],
   });
 }
@@ -138,6 +144,9 @@ export async function getUserById(id: string): Promise<User | null> {
   return user ?? null;
 }
 
-export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
+export async function verifyPassword(
+  plain: string,
+  hash: string,
+): Promise<boolean> {
   return bcrypt.compare(plain, hash);
 }

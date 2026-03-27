@@ -41,8 +41,8 @@ export default function CadastroScreen() {
     try {
       await register(name.trim(), email.trim(), password);
       router.replace("/(tabs)");
-    } catch (err: any) {
-      const msg = err?.message ?? "";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
       if (msg.includes("409")) {
         setError("Este e-mail já está cadastrado.");
       } else {

@@ -263,7 +263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const review = await createReview(parsed.data);
+      const review = await createReview(parsed.data, req.user!.userId);
       res.status(201).json({ review });
     } catch (err) {
       console.error("Create review error:", err);

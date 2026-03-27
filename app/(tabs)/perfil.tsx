@@ -131,7 +131,7 @@ function Row({
   value,
   valueColor,
 }: {
-  icon: any;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
   label: string;
   value: string;
   valueColor?: string;

@@ -1,6 +1,5 @@
 import { sql } from "drizzle-orm";
 import {
-  boolean,
   integer,
   jsonb,
   numeric,
@@ -48,6 +47,9 @@ export const reviews = pgTable("reviews", {
   place_id: text("place_id")
     .notNull()
     .references(() => placesKidspot.place_id),
+  user_id: varchar("user_id")
+    .references(() => users.id)
+    .notNull(),
   rating: integer("rating").notNull(),
   kid_flags: jsonb("kid_flags").notNull(),
   note: text("note"),
@@ -60,21 +62,34 @@ export const favorites = pgTable(
     id: varchar("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    user_key: text("user_key").notNull(),
+    user_id: varchar("user_id")
+      .notNull()
+      .references(() => users.id),
     place_id: text("place_id")
       .notNull()
       .references(() => placesKidspot.place_id),
     created_at: timestamp("created_at").defaultNow().notNull(),
   },
-  (table) => [unique("favorites_user_key_place_id_unique").on(table.user_key, table.place_id)],
+  (table) => [unique("favorites_user_id_place_id_unique").on(table.user_id, table.place_id)],
 );
+
+export const enrichmentCache = pgTable("enrichment_cache", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  place_id: text("place_id").notNull(),
+  source: text("source").notNull(),
+  data: jsonb("data").notNull(),
+  expires_at: timestamp("expires_at").notNull(),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [unique("enrichment_cache_place_source_unique").on(table.place_id, table.source)]);
 
 export const insertPlaceSchema = createInsertSchema(placesKidspot).omit({
   created_at: true,
 });
 
 export const insertReviewSchema = createInsertSchema(reviews)
-  .omit({ id: true, created_at: true })
+  .omit({ id: true, created_at: true, user_id: true })
   .extend({
     rating: z.number().int().min(1).max(5),
     kid_flags: z.object({
@@ -104,17 +119,6 @@ export type InsertPlace = z.infer<typeof insertPlaceSchema>;
 
 export type Review = typeof reviews.$inferSelect;
 export type InsertReview = z.infer<typeof insertReviewSchema>;
-
-export const enrichmentCache = pgTable("enrichment_cache", {
-  id: varchar("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  place_id: text("place_id").notNull(),
-  source: text("source").notNull(),
-  data: jsonb("data").notNull(),
-  expires_at: timestamp("expires_at").notNull(),
-  created_at: timestamp("created_at").defaultNow().notNull(),
-}, (table) => [unique("enrichment_cache_place_source_unique").on(table.place_id, table.source)]);
 
 export type EnrichmentCache = typeof enrichmentCache.$inferSelect;
 export type InsertEnrichmentCache = typeof enrichmentCache.$inferInsert;

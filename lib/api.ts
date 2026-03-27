@@ -28,6 +28,7 @@ export type KidFlags = {
 export type Review = {
   id: string;
   place_id: string;
+  user_id: string;
   rating: number;
   kid_flags: KidFlags;
   note?: string | null;
@@ -36,7 +37,7 @@ export type Review = {
 
 export type FavoriteRow = {
   id: string;
-  user_key: string;
+  user_id: string;
   place_id: string;
   created_at: string;
 };
