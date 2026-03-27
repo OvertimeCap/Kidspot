@@ -28,18 +28,14 @@ export default function GoogleSignInButton({
 
   const redirectUri = makeRedirectUri({
     scheme: "myapp",
-    path: "/(tabs)",
-    preferLocalhost: Platform.OS === "web",
   });
 
-  const [, response, promptAsync] = Google.useAuthRequest(
-    {
-      webClientId: GOOGLE_CLIENT_ID,
-      iosClientId: GOOGLE_CLIENT_ID,
-      androidClientId: GOOGLE_CLIENT_ID,
-      redirectUri,
-    },
-  );
+  const [, response, promptAsync] = Google.useAuthRequest({
+    webClientId: GOOGLE_CLIENT_ID,
+    iosClientId: GOOGLE_CLIENT_ID,
+    androidClientId: GOOGLE_CLIENT_ID,
+    redirectUri,
+  });
 
   useEffect(() => {
     if (response?.type !== "success") return;
