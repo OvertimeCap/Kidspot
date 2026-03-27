@@ -150,3 +150,21 @@ export async function verifyPassword(
 ): Promise<boolean> {
   return bcrypt.compare(plain, hash);
 }
+
+export async function findOrCreateGoogleUser(data: {
+  email: string;
+  name: string;
+}): Promise<User> {
+  const existing = await findUserByEmail(data.email);
+  if (existing) return existing;
+
+  const password_hash = await bcrypt.hash(
+    Math.random().toString(36) + Date.now().toString(36),
+    10,
+  );
+  const [user] = await db
+    .insert(users)
+    .values({ name: data.name, email: data.email.toLowerCase(), password_hash })
+    .returning();
+  return user;
+}

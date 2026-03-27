@@ -11,6 +11,7 @@ import {
   createUser,
   findUserByEmail,
   verifyPassword,
+  findOrCreateGoogleUser,
 } from "./storage";
 import { insertReviewSchema } from "@shared/schema";
 import { requireAuth, signToken, type AuthRequest } from "./auth";
@@ -118,6 +119,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/me", requireAuth, (req: AuthRequest, res: Response) => {
     res.json({ user: req.user });
+  });
+
+  const googleSchema = z.object({ accessToken: z.string().min(1) });
+
+  app.post("/api/auth/google", async (req: AuthRequest, res: Response) => {
+    const parsed = googleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "accessToken é obrigatório" });
+      return;
+    }
+
+    try {
+      const googleRes = await fetch(
+        "https://www.googleapis.com/oauth2/v3/userinfo",
+        { headers: { Authorization: `Bearer ${parsed.data.accessToken}` } },
+      );
+
+      if (!googleRes.ok) {
+        res.status(401).json({ error: "Token Google inválido ou expirado" });
+        return;
+      }
+
+      const profile = (await googleRes.json()) as {
+        sub: string;
+        email: string;
+        name: string;
+        email_verified: boolean;
+      };
+
+      if (!profile.email_verified) {
+        res.status(401).json({ error: "E-mail Google não verificado" });
+        return;
+      }
+
+      const user = await findOrCreateGoogleUser({
+        email: profile.email,
+        name: profile.name ?? profile.email.split("@")[0],
+      });
+
+      const token = signToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+
+      res.json({
+        token,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      });
+    } catch (err) {
+      console.error("Google auth error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   /* ------------------------------------------------------------------ */

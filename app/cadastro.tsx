@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
+import GoogleSignInButton from "@/components/GoogleSignInButton";
 
 export default function CadastroScreen() {
   const insets = useSafeAreaInsets();
@@ -155,6 +156,8 @@ export default function CadastroScreen() {
             <Text style={styles.dividerText}>ou</Text>
             <View style={styles.dividerLine} />
           </View>
+
+          <GoogleSignInButton onError={(msg) => setError(msg)} />
 
           <Pressable
             style={({ pressed }) => [styles.btnOutline, pressed && styles.btnOutlinePressed]}
