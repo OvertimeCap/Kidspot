@@ -654,6 +654,62 @@ export async function geocodePlace(placeId: string): Promise<GeocodeResult> {
   };
 }
 
+// ─── Claimable place search ───────────────────────────────────────────────────
+
+export type ClaimablePlace = {
+  place_id: string;
+  name: string;
+  address: string;
+  photo_reference?: string;
+};
+
+/**
+ * textSearchClaimable
+ *
+ * Searches Google Places Text Search for a business by name + optional city.
+ * Returns a simplified list suitable for the claim flow.
+ */
+export async function textSearchClaimable(
+  query: string,
+  city?: string,
+): Promise<ClaimablePlace[]> {
+  if (!GOOGLE_PLACES_API_KEY) return [];
+
+  const searchQuery = city ? `${query} em ${city}` : query;
+  const params = new URLSearchParams({
+    query: searchQuery,
+    key: GOOGLE_PLACES_API_KEY,
+    language: "pt-BR",
+    type: "establishment",
+  });
+
+  let res: globalThis.Response;
+  try {
+    res = await fetchWithTimeout(`${PLACES_BASE}/textsearch/json?${params.toString()}`, "textSearchClaimable");
+  } catch { return []; }
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as {
+    results: Array<{
+      place_id: string;
+      name: string;
+      formatted_address?: string;
+      vicinity?: string;
+      photos?: { photo_reference: string }[];
+    }>;
+    status: string;
+  };
+
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return [];
+
+  return (data.results ?? []).slice(0, 10).map((r) => ({
+    place_id: r.place_id,
+    name: r.name,
+    address: r.formatted_address ?? r.vicinity ?? "",
+    photo_reference: r.photos?.[0]?.photo_reference,
+  }));
+}
+
 // ─── Legacy API (kept for backward compatibility) ─────────────────────────────
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {

@@ -12,6 +12,9 @@ export interface AuthUser {
   name: string;
   email: string;
   role: UserRole;
+  linked_place_id?: string | null;
+  linked_place_name?: string | null;
+  linked_place_address?: string | null;
 }
 
 interface AuthContextValue {
@@ -22,6 +25,7 @@ interface AuthContextValue {
   register: (name: string, email: string, password: string) => Promise<void>;
   loginWithGoogle: (accessToken: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -32,12 +36,40 @@ const AuthContext = createContext<AuthContextValue>({
   register: async () => {},
   loginWithGoogle: async () => {},
   logout: async () => {},
+  refreshUser: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const fetchAndSetUser = useCallback(async () => {
+    const res = await apiRequest("GET", "/api/auth/me");
+    if (!res.ok) return null;
+    const data = await res.json();
+    const payload = data.user as {
+      userId: string;
+      name: string;
+      email: string;
+      role: UserRole;
+      linked_place_id?: string | null;
+      linked_place_name?: string | null;
+      linked_place_address?: string | null;
+    };
+    const validatedUser: AuthUser = {
+      id: payload.userId,
+      name: payload.name,
+      email: payload.email,
+      role: payload.role,
+      linked_place_id: payload.linked_place_id,
+      linked_place_name: payload.linked_place_name,
+      linked_place_address: payload.linked_place_address,
+    };
+    setUser(validatedUser);
+    await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(validatedUser));
+    return validatedUser;
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -46,8 +78,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!savedToken) return;
 
         setAuthToken(savedToken);
-        const res = await apiRequest("GET", "/api/auth/me");
-        if (!res.ok) {
+        const validatedUser = await fetchAndSetUser();
+        if (!validatedUser) {
           await Promise.all([
             AsyncStorage.removeItem(TOKEN_STORAGE_KEY),
             AsyncStorage.removeItem(USER_STORAGE_KEY),
@@ -55,25 +87,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAuthToken(null);
           return;
         }
-
-        const data = await res.json();
-        const payload = data.user as { userId: string; name: string; email: string; role: UserRole };
-        const validatedUser: AuthUser = {
-          id: payload.userId,
-          name: payload.name,
-          email: payload.email,
-          role: payload.role,
-        };
         setToken(savedToken);
-        setUser(validatedUser);
-        await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(validatedUser));
       } catch {
         // ignore storage or network errors — user stays logged out
       } finally {
         setIsLoading(false);
       }
     })();
-  }, []);
+  }, [fetchAndSetUser]);
 
   const persist = useCallback(async (newToken: string, newUser: AuthUser) => {
     setToken(newToken);
@@ -117,8 +138,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ]);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    try {
+      await fetchAndSetUser();
+    } catch {
+      // silent
+    }
+  }, [fetchAndSetUser]);
+
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, register, loginWithGoogle, logout }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, register, loginWithGoogle, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

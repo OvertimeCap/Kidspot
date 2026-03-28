@@ -28,9 +28,25 @@ interface ManagedUser {
   created_at: string;
 }
 
+interface ClaimItem {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  place_id: string;
+  place_name: string;
+  place_address: string;
+  contact_phone: string;
+  status: "pending" | "approved" | "denied";
+  created_at: string;
+  reviewed_at?: string | null;
+}
+
 const ALL_ROLES: UserRole[] = ["admin", "colaborador", "parceiro", "estabelecimento", "usuario"];
 const COLABORADOR_ROLES: UserRole[] = ["usuario", "estabelecimento", "parceiro"];
 const FILTER_ROLES: Array<UserRole | "todos"> = ["todos", "admin", "colaborador", "parceiro", "estabelecimento", "usuario"];
+
+type TabKey = "usuarios" | "reivindicacoes";
 
 export default function AdminUsuariosScreen() {
   const insets = useSafeAreaInsets();
@@ -38,13 +54,26 @@ export default function AdminUsuariosScreen() {
   const qc = useQueryClient();
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
+  const [activeTab, setActiveTab] = useState<TabKey>("usuarios");
+
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
   const [roleModalVisible, setRoleModalVisible] = useState(false);
   const [searchEmail, setSearchEmail] = useState("");
   const [filterRole, setFilterRole] = useState<UserRole | "todos">("todos");
 
+  const [claimFilter, setClaimFilter] = useState<"all" | "pending" | "approved" | "denied">("pending");
+
   const { data, isLoading, isError } = useQuery<{ users: ManagedUser[] }>({
     queryKey: ["/api/admin/users"],
+  });
+
+  const { data: claimsData, isLoading: claimsLoading, isError: claimsError } = useQuery<{ claims: ClaimItem[] }>({
+    queryKey: ["/api/admin/claims", claimFilter],
+    queryFn: async () => {
+      const params = claimFilter !== "all" ? `?status=${claimFilter}` : "";
+      const res = await apiRequest("GET", `/api/admin/claims${params}`);
+      return res.json();
+    },
   });
 
   const filteredUsers = useMemo(() => {
@@ -72,6 +101,22 @@ export default function AdminUsuariosScreen() {
     },
   });
 
+  const reviewClaimMutation = useMutation({
+    mutationFn: async ({ claimId, action }: { claimId: string; action: "approve" | "deny" }) => {
+      const res = await apiRequest("PATCH", `/api/admin/claims/${claimId}`, { action });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Erro ao processar reivindicação");
+      return body;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/claims"] });
+      qc.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: Error) => {
+      Alert.alert("Erro", err.message);
+    },
+  });
+
   const availableRoles = me?.role === "admin" ? ALL_ROLES : COLABORADOR_ROLES;
 
   function openRoleModal(u: ManagedUser) {
@@ -93,6 +138,35 @@ export default function AdminUsuariosScreen() {
         {
           text: "Confirmar",
           onPress: () => updateRoleMutation.mutate({ userId: selectedUser.id, role }),
+        },
+      ],
+    );
+  }
+
+  function handleApproveClaim(claim: ClaimItem) {
+    Alert.alert(
+      "Aprovar reivindicação",
+      `Aprovar vínculo de "${claim.user_name}" com "${claim.place_name}"?\n\nO usuário será promovido para Estabelecimento e outros pedidos pendentes para este local serão negados automaticamente.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Aprovar",
+          onPress: () => reviewClaimMutation.mutate({ claimId: claim.id, action: "approve" }),
+        },
+      ],
+    );
+  }
+
+  function handleDenyClaim(claim: ClaimItem) {
+    Alert.alert(
+      "Negar reivindicação",
+      `Negar solicitação de "${claim.user_name}" para "${claim.place_name}"?`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Negar",
+          style: "destructive",
+          onPress: () => reviewClaimMutation.mutate({ claimId: claim.id, action: "deny" }),
         },
       ],
     );
@@ -141,9 +215,110 @@ export default function AdminUsuariosScreen() {
     );
   }
 
+  function renderClaim({ item }: { item: ClaimItem }) {
+    const statusColors: Record<string, string> = {
+      pending: "#D97706",
+      approved: "#059669",
+      denied: "#DC2626",
+    };
+    const statusLabels: Record<string, string> = {
+      pending: "Pendente",
+      approved: "Aprovado",
+      denied: "Negado",
+    };
+    const statusIcons: Record<string, React.ComponentProps<typeof Ionicons>["name"]> = {
+      pending: "time-outline",
+      approved: "checkmark-circle-outline",
+      denied: "close-circle-outline",
+    };
+
+    const color = statusColors[item.status] ?? "#6B7280";
+    const isPending = item.status === "pending";
+    const createdDate = new Date(item.created_at).toLocaleDateString("pt-BR");
+
+    return (
+      <View style={styles.claimCard}>
+        <View style={styles.claimTopRow}>
+          <View style={styles.claimUserInfo}>
+            <Ionicons name="person-outline" size={14} color={Colors.textSecondary} />
+            <Text style={styles.claimUserName} numberOfLines={1}>{item.user_name}</Text>
+          </View>
+          <View style={[styles.claimStatusBadge, { backgroundColor: color + "18" }]}>
+            <Ionicons name={statusIcons[item.status]} size={12} color={color} />
+            <Text style={[styles.claimStatusText, { color }]}>{statusLabels[item.status]}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.claimUserEmail} numberOfLines={1}>{item.user_email}</Text>
+
+        <View style={styles.claimPlaceRow}>
+          <Ionicons name="storefront-outline" size={14} color={Colors.primary} />
+          <Text style={styles.claimPlaceName} numberOfLines={1}>{item.place_name}</Text>
+        </View>
+        <View style={styles.claimAddressRow}>
+          <Ionicons name="location-outline" size={12} color={Colors.textSecondary} />
+          <Text style={styles.claimAddress} numberOfLines={2}>{item.place_address}</Text>
+        </View>
+
+        <View style={styles.claimPhoneRow}>
+          <Ionicons name="call-outline" size={13} color={Colors.textSecondary} />
+          <Text style={styles.claimPhone}>{item.contact_phone}</Text>
+          <Text style={styles.claimDate}>{createdDate}</Text>
+        </View>
+
+        {isPending && (
+          <View style={styles.claimActions}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.claimActionBtn,
+                styles.claimDenyBtn,
+                pressed && { opacity: 0.75 },
+                reviewClaimMutation.isPending && { opacity: 0.5 },
+              ]}
+              onPress={() => handleDenyClaim(item)}
+              disabled={reviewClaimMutation.isPending}
+            >
+              <Ionicons name="close" size={16} color="#DC2626" />
+              <Text style={styles.claimDenyText}>Negar</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.claimActionBtn,
+                styles.claimApproveBtn,
+                pressed && { opacity: 0.75 },
+                reviewClaimMutation.isPending && { opacity: 0.5 },
+              ]}
+              onPress={() => handleApproveClaim(item)}
+              disabled={reviewClaimMutation.isPending}
+            >
+              {reviewClaimMutation.isPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={16} color="#fff" />
+                  <Text style={styles.claimApproveText}>Aprovar</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        )}
+      </View>
+    );
+  }
+
   const totalCount = data?.users?.length ?? 0;
   const filteredCount = filteredUsers.length;
   const isFiltering = filterRole !== "todos" || searchEmail.trim() !== "";
+  const claims = claimsData?.claims ?? [];
+
+  const { data: pendingClaimsData } = useQuery<{ claims: ClaimItem[] }>({
+    queryKey: ["/api/admin/claims", "pending"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/claims?status=pending");
+      return res.json();
+    },
+  });
+  const pendingCount = pendingClaimsData?.claims?.length ?? 0;
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
@@ -154,113 +329,216 @@ export default function AdminUsuariosScreen() {
         >
           <Ionicons name="arrow-back" size={24} color={Colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Gerenciar usuários</Text>
+        <Text style={styles.headerTitle}>Administração</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <View style={styles.searchBar}>
-        <Ionicons name="search-outline" size={18} color={Colors.textSecondary} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Buscar por e-mail..."
-          placeholderTextColor={Colors.textSecondary}
-          value={searchEmail}
-          onChangeText={setSearchEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          returnKeyType="search"
-          clearButtonMode="while-editing"
-        />
-        {searchEmail.length > 0 && Platform.OS !== "ios" && (
-          <Pressable onPress={() => setSearchEmail("")} hitSlop={8}>
-            <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
-          </Pressable>
-        )}
+      <View style={styles.tabs}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.tab,
+            activeTab === "usuarios" && styles.tabActive,
+            pressed && { opacity: 0.8 },
+          ]}
+          onPress={() => setActiveTab("usuarios")}
+        >
+          <Text style={[styles.tabText, activeTab === "usuarios" && styles.tabTextActive]}>
+            Usuários
+          </Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [
+            styles.tab,
+            activeTab === "reivindicacoes" && styles.tabActive,
+            pressed && { opacity: 0.8 },
+          ]}
+          onPress={() => setActiveTab("reivindicacoes")}
+        >
+          <Text style={[styles.tabText, activeTab === "reivindicacoes" && styles.tabTextActive]}>
+            Reivindicações
+            {pendingCount > 0 && (
+              <Text style={styles.tabBadge}> {pendingCount}</Text>
+            )}
+          </Text>
+        </Pressable>
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filtersRow}
-      >
-        {FILTER_ROLES.map((role) => {
-          const isActive = filterRole === role;
-          const color = role === "todos" ? Colors.primary : ROLE_COLORS[role as UserRole];
-          return (
-            <Pressable
-              key={role}
-              style={({ pressed }) => [
-                styles.filterChip,
-                isActive && { backgroundColor: color, borderColor: color },
-                pressed && { opacity: 0.8 },
-              ]}
-              onPress={() => setFilterRole(role)}
-            >
-              {role !== "todos" && (
-                <View style={[
-                  styles.filterChipDot,
-                  { backgroundColor: isActive ? "#fff" : color },
-                ]} />
-              )}
-              <Text style={[
-                styles.filterChipText,
-                isActive && { color: "#fff" },
-                !isActive && role !== "todos" && { color },
-              ]}>
-                {role === "todos" ? "Todos" : ROLE_LABELS[role as UserRole]}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      {activeTab === "usuarios" && (
+        <>
+          <View style={styles.searchBar}>
+            <Ionicons name="search-outline" size={18} color={Colors.textSecondary} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Buscar por e-mail..."
+              placeholderTextColor={Colors.textSecondary}
+              value={searchEmail}
+              onChangeText={setSearchEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+            {searchEmail.length > 0 && Platform.OS !== "ios" && (
+              <Pressable onPress={() => setSearchEmail("")} hitSlop={8}>
+                <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+              </Pressable>
+            )}
+          </View>
 
-      {!isLoading && !isError && (
-        <View style={styles.countRow}>
-          <Text style={styles.countText}>
-            {isFiltering
-              ? `${filteredCount} de ${totalCount} usuário${totalCount !== 1 ? "s" : ""}`
-              : `${totalCount} usuário${totalCount !== 1 ? "s" : ""}`}
-          </Text>
-          {isFiltering && (
-            <Pressable onPress={() => { setFilterRole("todos"); setSearchEmail(""); }}>
-              <Text style={styles.clearFilters}>Limpar filtros</Text>
-            </Pressable>
-          )}
-        </View>
-      )}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filtersRow}
+          >
+            {FILTER_ROLES.map((role) => {
+              const isActive = filterRole === role;
+              const color = role === "todos" ? Colors.primary : ROLE_COLORS[role as UserRole];
+              return (
+                <Pressable
+                  key={role}
+                  style={({ pressed }) => [
+                    styles.filterChip,
+                    isActive && { backgroundColor: color, borderColor: color },
+                    pressed && { opacity: 0.8 },
+                  ]}
+                  onPress={() => setFilterRole(role)}
+                >
+                  {role !== "todos" && (
+                    <View style={[
+                      styles.filterChipDot,
+                      { backgroundColor: isActive ? "#fff" : color },
+                    ]} />
+                  )}
+                  <Text style={[
+                    styles.filterChipText,
+                    isActive && { color: "#fff" },
+                    !isActive && role !== "todos" && { color },
+                  ]}>
+                    {role === "todos" ? "Todos" : ROLE_LABELS[role as UserRole]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
 
-      {isLoading && (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-        </View>
-      )}
-
-      {isError && (
-        <View style={styles.centered}>
-          <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
-          <Text style={styles.errorText}>Não foi possível carregar os usuários</Text>
-        </View>
-      )}
-
-      {!isLoading && !isError && (
-        <FlatList
-          data={filteredUsers}
-          keyExtractor={(u) => u.id}
-          renderItem={renderUser}
-          contentContainerStyle={styles.list}
-          keyboardShouldPersistTaps="handled"
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-          ListEmptyComponent={
-            <View style={styles.centered}>
-              <Ionicons name="search-outline" size={48} color={Colors.border} />
-              <Text style={styles.emptyText}>
+          {!isLoading && !isError && (
+            <View style={styles.countRow}>
+              <Text style={styles.countText}>
                 {isFiltering
-                  ? "Nenhum usuário encontrado\ncom esses filtros"
-                  : "Nenhum usuário encontrado"}
+                  ? `${filteredCount} de ${totalCount} usuário${totalCount !== 1 ? "s" : ""}`
+                  : `${totalCount} usuário${totalCount !== 1 ? "s" : ""}`}
               </Text>
+              {isFiltering && (
+                <Pressable onPress={() => { setFilterRole("todos"); setSearchEmail(""); }}>
+                  <Text style={styles.clearFilters}>Limpar filtros</Text>
+                </Pressable>
+              )}
             </View>
-          }
-        />
+          )}
+
+          {isLoading && (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+            </View>
+          )}
+
+          {isError && (
+            <View style={styles.centered}>
+              <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
+              <Text style={styles.errorText}>Não foi possível carregar os usuários</Text>
+            </View>
+          )}
+
+          {!isLoading && !isError && (
+            <FlatList
+              data={filteredUsers}
+              keyExtractor={(u) => u.id}
+              renderItem={renderUser}
+              contentContainerStyle={styles.list}
+              keyboardShouldPersistTaps="handled"
+              ItemSeparatorComponent={() => <View style={styles.separator} />}
+              ListEmptyComponent={
+                <View style={styles.centered}>
+                  <Ionicons name="search-outline" size={48} color={Colors.border} />
+                  <Text style={styles.emptyText}>
+                    {isFiltering
+                      ? "Nenhum usuário encontrado\ncom esses filtros"
+                      : "Nenhum usuário encontrado"}
+                  </Text>
+                </View>
+              }
+            />
+          )}
+        </>
+      )}
+
+      {activeTab === "reivindicacoes" && (
+        <>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filtersRow}
+          >
+            {(["pending", "approved", "denied", "all"] as const).map((f) => {
+              const labels = { pending: "Pendentes", approved: "Aprovadas", denied: "Negadas", all: "Todas" };
+              const colors = { pending: "#D97706", approved: "#059669", denied: "#DC2626", all: Colors.primary };
+              const isActive = claimFilter === f;
+              const color = colors[f];
+              return (
+                <Pressable
+                  key={f}
+                  style={({ pressed }) => [
+                    styles.filterChip,
+                    isActive && { backgroundColor: color, borderColor: color },
+                    pressed && { opacity: 0.8 },
+                  ]}
+                  onPress={() => setClaimFilter(f)}
+                >
+                  <Text style={[
+                    styles.filterChipText,
+                    isActive && { color: "#fff" },
+                    !isActive && { color },
+                  ]}>
+                    {labels[f]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {claimsLoading && (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+            </View>
+          )}
+
+          {claimsError && (
+            <View style={styles.centered}>
+              <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
+              <Text style={styles.errorText}>Não foi possível carregar as reivindicações</Text>
+            </View>
+          )}
+
+          {!claimsLoading && !claimsError && (
+            <FlatList
+              data={claims}
+              keyExtractor={(c) => c.id}
+              renderItem={renderClaim}
+              contentContainerStyle={[styles.list, { gap: 12 }]}
+              keyboardShouldPersistTaps="handled"
+              ListEmptyComponent={
+                <View style={styles.centered}>
+                  <Ionicons name="document-outline" size={48} color={Colors.border} />
+                  <Text style={styles.emptyText}>
+                    {claimFilter === "pending"
+                      ? "Nenhuma reivindicação pendente"
+                      : "Nenhuma reivindicação encontrada"}
+                  </Text>
+                </View>
+              }
+            />
+          )}
+        </>
       )}
 
       <Modal
@@ -340,6 +618,38 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontFamily: "Inter_700Bold",
   },
+  tabs: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: "#fff",
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  tabActive: {
+    borderBottomColor: Colors.primary,
+  },
+  tabText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_500Medium",
+    fontWeight: "500",
+  },
+  tabTextActive: {
+    color: Colors.primary,
+    fontFamily: "Inter_600SemiBold",
+    fontWeight: "600",
+  },
+  tabBadge: {
+    color: "#DC2626",
+    fontFamily: "Inter_700Bold",
+    fontWeight: "700",
+  },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -412,6 +722,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
     padding: 32,
+    minHeight: 200,
   },
   errorText: {
     fontSize: 15,
@@ -428,7 +739,6 @@ const styles = StyleSheet.create({
   },
   list: {
     paddingVertical: 4,
-    gap: 0,
   },
   separator: {
     height: 1,
@@ -503,6 +813,131 @@ const styles = StyleSheet.create({
     height: 36,
     alignItems: "center",
     justifyContent: "center",
+  },
+  claimCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 14,
+    marginHorizontal: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 1,
+    gap: 4,
+  },
+  claimTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 2,
+  },
+  claimUserInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flex: 1,
+  },
+  claimUserName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.text,
+    fontFamily: "Inter_600SemiBold",
+    flex: 1,
+  },
+  claimStatusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  claimStatusText: {
+    fontSize: 11,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+  },
+  claimUserEmail: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    marginBottom: 6,
+  },
+  claimPlaceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  claimPlaceName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.primary,
+    fontFamily: "Inter_600SemiBold",
+    flex: 1,
+  },
+  claimAddressRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 4,
+  },
+  claimAddress: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    flex: 1,
+    lineHeight: 16,
+  },
+  claimPhoneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 4,
+  },
+  claimPhone: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    flex: 1,
+  },
+  claimDate: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+  },
+  claimActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  claimActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  claimDenyBtn: {
+    borderWidth: 1.5,
+    borderColor: "#DC2626",
+    backgroundColor: "#FEF2F2",
+  },
+  claimDenyText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#DC2626",
+    fontFamily: "Inter_600SemiBold",
+  },
+  claimApproveBtn: {
+    backgroundColor: "#059669",
+  },
+  claimApproveText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#fff",
+    fontFamily: "Inter_600SemiBold",
   },
   modalOverlay: {
     flex: 1,

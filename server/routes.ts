@@ -15,9 +15,17 @@ import {
   listUsers,
   updateUserRole,
   getUserById,
+  createClaim,
+  getClaimsForUser,
+  listClaims,
+  approveClaim,
+  denyClaim,
+  getApprovedAdminForPlace,
+  getApprovedPlaceIds,
 } from "./storage";
-import { insertReviewSchema, type UserRole } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, type UserRole } from "@shared/schema";
 import { requireAuth, signToken, type AuthRequest } from "./auth";
+import { textSearchClaimable } from "./google-places";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/health", (_req: AuthRequest, res: Response) => {
@@ -69,7 +77,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(201).json({
         token,
-        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+        user: { id: user.id, name: user.name, email: user.email, role: user.role, linked_place_id: user.linked_place_id ?? null, linked_place_name: user.linked_place_name ?? null, linked_place_address: user.linked_place_address ?? null },
       });
     } catch (err) {
       console.error("Register error:", err);
@@ -112,7 +120,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.json({
         token,
-        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+        user: { id: user.id, name: user.name, email: user.email, role: user.role, linked_place_id: user.linked_place_id ?? null, linked_place_name: user.linked_place_name ?? null, linked_place_address: user.linked_place_address ?? null },
       });
     } catch (err) {
       console.error("Login error:", err);
@@ -132,6 +140,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: dbUser.email,
         role: dbUser.role,
         name: dbUser.name,
+        linked_place_id: dbUser.linked_place_id,
+        linked_place_name: dbUser.linked_place_name,
+        linked_place_address: dbUser.linked_place_address,
       },
     });
   });
@@ -182,7 +193,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({
         token,
-        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+        user: { id: user.id, name: user.name, email: user.email, role: user.role, linked_place_id: user.linked_place_id ?? null, linked_place_name: user.linked_place_name ?? null, linked_place_address: user.linked_place_address ?? null },
       });
     } catch (err) {
       console.error("Google auth error:", err);
@@ -322,6 +333,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /* ------------------------------------------------------------------ */
+  /* Places search for claimable establishments                          */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/places/search-claimable", requireAuth, async (req: AuthRequest, res: Response) => {
+    const q = (req.query.q as string) ?? "";
+    const city = (req.query.city as string) ?? "";
+
+    if (!q || q.trim().length < 2) {
+      res.status(400).json({ error: "Informe pelo menos 2 caracteres para buscar" });
+      return;
+    }
+
+    try {
+      const approvedIds = await getApprovedPlaceIds();
+      const results = await textSearchClaimable(q.trim(), city.trim());
+      const filtered = results.filter((p) => !approvedIds.has(p.place_id));
+      res.json({ places: filtered });
+    } catch (err) {
+      console.error("Search claimable error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
   /* Reviews                                                              */
   /* ------------------------------------------------------------------ */
 
@@ -388,6 +423,144 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Get favorites error:", err);
       res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Place Claims                                                         */
+  /* ------------------------------------------------------------------ */
+
+  const CLAIM_VALID_STATUSES = new Set(["pending", "approved", "denied"]);
+
+  app.post("/api/claims", requireAuth, async (req: AuthRequest, res: Response) => {
+    const parsed = insertClaimSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const userId = req.user!.userId;
+
+    try {
+      const dbUser = await getUserById(userId);
+      if (!dbUser) {
+        res.status(401).json({ error: "Usuário não encontrado" });
+        return;
+      }
+
+      if (dbUser.role !== "usuario") {
+        res.status(403).json({ error: "Apenas usuários comuns podem solicitar vínculo com estabelecimento" });
+        return;
+      }
+
+      if (dbUser.linked_place_id) {
+        res.status(409).json({ error: "Você já possui um estabelecimento vinculado" });
+        return;
+      }
+
+      const approvedAdmin = await getApprovedAdminForPlace(parsed.data.place_id);
+      if (approvedAdmin) {
+        res.status(409).json({ error: "Este local já possui um administrador aprovado" });
+        return;
+      }
+
+      const existingClaims = await getClaimsForUser(userId);
+      const hasPending = existingClaims.some((c) => c.status === "pending");
+      if (hasPending) {
+        res.status(409).json({ error: "Você já possui uma solicitação pendente" });
+        return;
+      }
+
+      const claim = await createClaim(userId, parsed.data);
+      res.status(201).json({ claim });
+    } catch (err) {
+      console.error("Create claim error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/claims/my", requireAuth, async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId;
+    try {
+      const claims = await getClaimsForUser(userId);
+      res.json({ claims });
+    } catch (err) {
+      console.error("Get my claims error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/admin/claims", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+
+    const status = req.query.status as string | undefined;
+
+    if (status !== undefined && !CLAIM_VALID_STATUSES.has(status)) {
+      res.status(400).json({ error: `status inválido. Use: pending, approved ou denied` });
+      return;
+    }
+
+    try {
+      const claims = await listClaims(status);
+      res.json({ claims });
+    } catch (err) {
+      console.error("List claims error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const reviewClaimSchema = z.object({
+    action: z.enum(["approve", "deny"]),
+  });
+
+  app.patch("/api/admin/claims/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+
+    const parsed = reviewClaimSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const claimId = req.params.id as string;
+
+    try {
+      if (parsed.data.action === "approve") {
+        const result = await approveClaim(claimId, caller.id);
+        res.json({
+          claim: result.claim,
+          user: {
+            id: result.user.id,
+            name: result.user.name,
+            email: result.user.email,
+            role: result.user.role,
+            linked_place_id: result.user.linked_place_id,
+            linked_place_name: result.user.linked_place_name,
+            linked_place_address: result.user.linked_place_address,
+          },
+        });
+      } else {
+        const claim = await denyClaim(claimId, caller.id);
+        res.json({ claim });
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      console.error("Review claim error:", msg);
+      if (msg.includes("não encontrada")) {
+        res.status(404).json({ error: msg });
+      } else if (msg.includes("já foi revisada") || msg.includes("já possui um administrador")) {
+        res.status(409).json({ error: msg });
+      } else {
+        res.status(500).json({ error: msg });
+      }
     }
   });
 

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -6,21 +6,189 @@ import {
   Pressable,
   Platform,
   Alert,
+  Modal,
+  TextInput,
+  ActivityIndicator,
+  ScrollView,
+  Image,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from "@/lib/auth-context";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest, getApiUrl } from "@/lib/query-client";
 import Colors from "@/constants/colors";
+
+interface ClaimablePlace {
+  place_id: string;
+  name: string;
+  address: string;
+  photo_reference?: string;
+}
+
+interface MyClaim {
+  id: string;
+  place_id: string;
+  place_name: string;
+  place_address: string;
+  contact_phone: string;
+  status: "pending" | "approved" | "denied";
+  created_at: string;
+}
 
 export default function PerfilScreen() {
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const qc = useQueryClient();
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 84 + 24 : insets.bottom + 16;
+
+  const [claimModalVisible, setClaimModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCity, setSearchCity] = useState("");
+  const [searchResults, setSearchResults] = useState<ClaimablePlace[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedPlace, setSelectedPlace] = useState<ClaimablePlace | null>(null);
+  const [contactPhone, setContactPhone] = useState("");
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user) {
+        refreshUser();
+      }
+    }, [user, refreshUser]),
+  );
+
+  const { data: myClaimsData, refetch: refetchClaims } = useQuery<{ claims: MyClaim[] }>({
+    queryKey: ["/api/claims/my"],
+    enabled: !!user && user.role === "usuario",
+  });
+
+  const myClaims = myClaimsData?.claims ?? [];
+  const latestClaim = myClaims[0] ?? null;
+
+  const submitClaimMutation = useMutation({
+    mutationFn: async (data: {
+      place_id: string;
+      place_name: string;
+      place_address: string;
+      place_photo_reference?: string;
+      contact_phone: string;
+    }) => {
+      const res = await apiRequest("POST", "/api/claims", data);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Erro ao enviar solicitação");
+      return body;
+    },
+    onSuccess: async () => {
+      setClaimModalVisible(false);
+      resetClaimForm();
+      await refetchClaims();
+      Alert.alert(
+        "Solicitação enviada!",
+        "Sua solicitação de vínculo foi registrada. Um administrador irá analisar em breve.",
+      );
+    },
+    onError: (err: Error) => {
+      Alert.alert("Erro", err.message);
+    },
+  });
+
+  function resetClaimForm() {
+    setSearchQuery("");
+    setSearchCity("");
+    setSearchResults([]);
+    setSelectedPlace(null);
+    setContactPhone("");
+  }
+
+  function handleSearchChange(text: string) {
+    setSearchQuery(text);
+    setSelectedPlace(null);
+
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (text.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    searchTimeout.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const params = new URLSearchParams({ q: text.trim() });
+        if (searchCity.trim()) params.set("city", searchCity.trim());
+        const res = await apiRequest("GET", `/api/places/search-claimable?${params.toString()}`);
+        const body = await res.json();
+        setSearchResults(body.places ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 600);
+  }
+
+  function handleCityChange(text: string) {
+    setSearchCity(text);
+    setSelectedPlace(null);
+
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (searchQuery.trim().length < 2) return;
+
+    searchTimeout.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const params = new URLSearchParams({ q: searchQuery.trim() });
+        if (text.trim()) params.set("city", text.trim());
+        const res = await apiRequest("GET", `/api/places/search-claimable?${params.toString()}`);
+        const body = await res.json();
+        setSearchResults(body.places ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 600);
+  }
+
+  function handleSelectPlace(place: ClaimablePlace) {
+    setSelectedPlace(place);
+    setSearchResults([]);
+  }
+
+  function handleSubmitClaim() {
+    if (!selectedPlace) {
+      Alert.alert("Atenção", "Selecione um local na lista de resultados");
+      return;
+    }
+    if (!contactPhone.trim() || contactPhone.trim().length < 8) {
+      Alert.alert("Atenção", "Informe um telefone de contato válido");
+      return;
+    }
+
+    Alert.alert(
+      "Confirmar solicitação",
+      `Deseja solicitar vínculo com "${selectedPlace.name}"?`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Confirmar",
+          onPress: () => {
+            submitClaimMutation.mutate({
+              place_id: selectedPlace.place_id,
+              place_name: selectedPlace.name,
+              place_address: selectedPlace.address,
+              place_photo_reference: selectedPlace.photo_reference,
+              contact_phone: contactPhone.trim(),
+            });
+          },
+        },
+      ],
+    );
+  }
 
   function handleLogout() {
     Alert.alert(
@@ -80,7 +248,11 @@ export default function PerfilScreen() {
     .join("");
 
   return (
-    <View style={[styles.container, { paddingTop: topPad }]}>
+    <ScrollView
+      style={[styles.container, { paddingTop: topPad }]}
+      contentContainerStyle={{ paddingBottom: bottomPad + 24 }}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Perfil</Text>
         <Ionicons name="person-circle-outline" size={24} color={Colors.primary} />
@@ -102,13 +274,89 @@ export default function PerfilScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Conta</Text>
-
         <View style={styles.card}>
           <Row icon="mail-outline" label="E-mail" value={user.email} />
           <View style={styles.separator} />
           <Row icon="shield-checkmark-outline" label="Perfil de acesso" value={roleLabel} valueColor={roleColor} />
         </View>
       </View>
+
+      {user.role === "estabelecimento" && user.linked_place_id && (
+        <View style={[styles.section, { marginTop: 16 }]}>
+          <Text style={styles.sectionTitle}>Meu Estabelecimento</Text>
+          <View style={[styles.linkedPlaceCard]}>
+            <View style={styles.linkedPlaceHeader}>
+              <View style={styles.verifiedBadge}>
+                <Ionicons name="checkmark-circle" size={18} color="#059669" />
+                <Text style={styles.verifiedText}>Verificado</Text>
+              </View>
+            </View>
+            <Text style={styles.linkedPlaceName}>{user.linked_place_name}</Text>
+            <View style={styles.linkedPlaceAddressRow}>
+              <Ionicons name="location-outline" size={14} color={Colors.textSecondary} />
+              <Text style={styles.linkedPlaceAddress} numberOfLines={2}>
+                {user.linked_place_address}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {user.role === "usuario" && (
+        <View style={[styles.section, { marginTop: 16 }]}>
+          <Text style={styles.sectionTitle}>Estabelecimento</Text>
+
+          {latestClaim && latestClaim.status === "pending" && (
+            <View style={styles.claimStatusCard}>
+              <View style={styles.claimStatusHeader}>
+                <Ionicons name="time-outline" size={20} color="#D97706" />
+                <Text style={[styles.claimStatusLabel, { color: "#D97706" }]}>Solicitação pendente</Text>
+              </View>
+              <Text style={styles.claimPlaceName}>{latestClaim.place_name}</Text>
+              <Text style={styles.claimPlaceAddress} numberOfLines={1}>{latestClaim.place_address}</Text>
+              <Text style={styles.claimInfo}>
+                Um administrador irá analisar sua solicitação em breve.
+              </Text>
+            </View>
+          )}
+
+          {latestClaim && latestClaim.status === "denied" && (
+            <View style={styles.claimStatusCard}>
+              <View style={styles.claimStatusHeader}>
+                <Ionicons name="close-circle-outline" size={20} color="#DC2626" />
+                <Text style={[styles.claimStatusLabel, { color: "#DC2626" }]}>Solicitação negada</Text>
+              </View>
+              <Text style={styles.claimPlaceName}>{latestClaim.place_name}</Text>
+              <Text style={styles.claimInfo}>
+                Sua solicitação anterior foi negada. Você pode solicitar vínculo com outro estabelecimento.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [styles.claimBtn, pressed && { opacity: 0.85 }]}
+                onPress={() => setClaimModalVisible(true)}
+              >
+                <Ionicons name="storefront-outline" size={18} color="#fff" />
+                <Text style={styles.claimBtnText}>Nova solicitação</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {!latestClaim && (
+            <Pressable
+              style={({ pressed }) => [styles.claimActionCard, pressed && { opacity: 0.85 }]}
+              onPress={() => setClaimModalVisible(true)}
+            >
+              <View style={styles.claimActionLeft}>
+                <Ionicons name="storefront-outline" size={22} color="#0891B2" />
+                <View>
+                  <Text style={styles.claimActionText}>Solicitar vínculo com estabelecimento</Text>
+                  <Text style={styles.claimActionSub}>Gerencie seu negócio no KidSpot</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+            </Pressable>
+          )}
+        </View>
+      )}
 
       {(user.role === "admin" || user.role === "colaborador") && (
         <View style={[styles.section, { marginTop: 16 }]}>
@@ -126,9 +374,7 @@ export default function PerfilScreen() {
         </View>
       )}
 
-      <View style={styles.spacer} />
-
-      <View style={[styles.footer, { paddingBottom: bottomPad + 24 }]}>
+      <View style={styles.logoutSection}>
         <Pressable
           style={({ pressed }) => [styles.logoutBtn, pressed && { opacity: 0.85 }]}
           onPress={handleLogout}
@@ -137,7 +383,154 @@ export default function PerfilScreen() {
           <Text style={styles.logoutText}>Sair da conta</Text>
         </Pressable>
       </View>
-    </View>
+
+      <Modal
+        visible={claimModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => { setClaimModalVisible(false); resetClaimForm(); }}
+      >
+        <View style={[styles.modalContainer, { paddingTop: insets.top + 8 }]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Solicitar vínculo</Text>
+            <Pressable
+              onPress={() => { setClaimModalVisible(false); resetClaimForm(); }}
+              hitSlop={12}
+            >
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            style={styles.modalScroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.modalSectionLabel}>Buscar seu negócio</Text>
+
+            <View style={styles.inputRow}>
+              <Ionicons name="search-outline" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Nome do estabelecimento"
+                placeholderTextColor={Colors.textSecondary}
+                value={searchQuery}
+                onChangeText={handleSearchChange}
+                returnKeyType="search"
+                autoFocus
+              />
+            </View>
+
+            <View style={[styles.inputRow, { marginTop: 8 }]}>
+              <Ionicons name="location-outline" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Cidade (opcional)"
+                placeholderTextColor={Colors.textSecondary}
+                value={searchCity}
+                onChangeText={handleCityChange}
+                returnKeyType="done"
+              />
+            </View>
+
+            {isSearching && (
+              <View style={styles.searchingRow}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={styles.searchingText}>Buscando...</Text>
+              </View>
+            )}
+
+            {!isSearching && searchResults.length > 0 && !selectedPlace && (
+              <View style={styles.resultsList}>
+                {searchResults.map((place) => (
+                  <Pressable
+                    key={place.place_id}
+                    style={({ pressed }) => [styles.resultItem, pressed && { backgroundColor: Colors.background }]}
+                    onPress={() => handleSelectPlace(place)}
+                  >
+                    {place.photo_reference ? (
+                      <Image
+                        source={{ uri: `${getApiUrl()}/api/places/photo?reference=${encodeURIComponent(place.photo_reference)}&maxwidth=80` }}
+                        style={styles.resultPhoto}
+                      />
+                    ) : (
+                      <View style={[styles.resultPhoto, styles.resultPhotoPlaceholder]}>
+                        <Ionicons name="storefront-outline" size={20} color={Colors.border} />
+                      </View>
+                    )}
+                    <View style={styles.resultInfo}>
+                      <Text style={styles.resultName} numberOfLines={1}>{place.name}</Text>
+                      <Text style={styles.resultAddress} numberOfLines={2}>{place.address}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={Colors.textSecondary} />
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {!isSearching && searchQuery.trim().length >= 2 && searchResults.length === 0 && !selectedPlace && (
+              <Text style={styles.noResults}>Nenhum resultado encontrado</Text>
+            )}
+
+            {selectedPlace && (
+              <View style={styles.selectedPlaceCard}>
+                <View style={styles.selectedPlaceHeader}>
+                  <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
+                  <Text style={styles.selectedPlaceLabel}>Local selecionado</Text>
+                  <Pressable onPress={() => setSelectedPlace(null)} hitSlop={8}>
+                    <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+                  </Pressable>
+                </View>
+                <Text style={styles.selectedPlaceName}>{selectedPlace.name}</Text>
+                <Text style={styles.selectedPlaceAddress}>{selectedPlace.address}</Text>
+              </View>
+            )}
+
+            {selectedPlace && (
+              <View style={{ marginTop: 20 }}>
+                <Text style={styles.modalSectionLabel}>Telefone de contato para verificação</Text>
+                <View style={styles.inputRow}>
+                  <Ionicons name="call-outline" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="(00) 00000-0000"
+                    placeholderTextColor={Colors.textSecondary}
+                    value={contactPhone}
+                    onChangeText={setContactPhone}
+                    keyboardType="phone-pad"
+                    returnKeyType="done"
+                    maxLength={20}
+                  />
+                </View>
+                <Text style={styles.phoneHint}>
+                  Um administrador pode entrar em contato neste número para verificar sua solicitação.
+                </Text>
+              </View>
+            )}
+
+            {selectedPlace && (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.submitBtn,
+                  pressed && { opacity: 0.85 },
+                  submitClaimMutation.isPending && { opacity: 0.6 },
+                ]}
+                onPress={handleSubmitClaim}
+                disabled={submitClaimMutation.isPending}
+              >
+                {submitClaimMutation.isPending ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.submitBtnText}>Enviar solicitação</Text>
+                )}
+              </Pressable>
+            )}
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      </Modal>
+    </ScrollView>
   );
 }
 
@@ -189,6 +582,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 32,
     gap: 12,
+    minHeight: 400,
   },
   emptyTitle: {
     fontSize: 20,
@@ -344,6 +738,137 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.border,
     marginHorizontal: 16,
   },
+  linkedPlaceCard: {
+    backgroundColor: "#F0FDF4",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    gap: 6,
+  },
+  linkedPlaceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  verifiedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  verifiedText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#059669",
+    fontFamily: "Inter_600SemiBold",
+  },
+  linkedPlaceName: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: Colors.text,
+    fontFamily: "Inter_700Bold",
+  },
+  linkedPlaceAddressRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 4,
+  },
+  linkedPlaceAddress: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
+  },
+  claimStatusCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 16,
+    gap: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  claimStatusHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 2,
+  },
+  claimStatusLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+  },
+  claimPlaceName: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: Colors.text,
+    fontFamily: "Inter_600SemiBold",
+  },
+  claimPlaceAddress: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+  },
+  claimInfo: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  claimBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  claimBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+  },
+  claimActionCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  claimActionLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
+  claimActionText: {
+    fontSize: 14,
+    color: Colors.text,
+    fontFamily: "Inter_500Medium",
+    fontWeight: "500",
+  },
+  claimActionSub: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    marginTop: 2,
+  },
   adminCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -368,9 +893,9 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontFamily: "Inter_500Medium",
   },
-  spacer: { flex: 1 },
-  footer: {
+  logoutSection: {
     paddingHorizontal: 16,
+    marginTop: 24,
   },
   logoutBtn: {
     flexDirection: "row",
@@ -387,5 +912,175 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     fontFamily: "Inter_600SemiBold",
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: Colors.text,
+    fontFamily: "Inter_700Bold",
+  },
+  modalScroll: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  modalSectionLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: Colors.textSecondary,
+    fontFamily: "Inter_600SemiBold",
+    marginBottom: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 8,
+  },
+  inputIcon: {},
+  input: {
+    flex: 1,
+    fontSize: 15,
+    color: Colors.text,
+    fontFamily: "Inter_400Regular",
+    padding: 0,
+  },
+  searchingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  searchingText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+  },
+  resultsList: {
+    marginTop: 8,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: "hidden",
+  },
+  resultItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  resultPhoto: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+  resultPhotoPlaceholder: {
+    backgroundColor: Colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  resultInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  resultName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.text,
+    fontFamily: "Inter_600SemiBold",
+  },
+  resultAddress: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 16,
+  },
+  noResults: {
+    textAlign: "center",
+    color: Colors.textSecondary,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    paddingVertical: 16,
+  },
+  selectedPlaceCard: {
+    backgroundColor: Colors.primary + "10",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.primary + "40",
+    gap: 4,
+    marginTop: 12,
+  },
+  selectedPlaceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+  selectedPlaceLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "600",
+    color: Colors.primary,
+    fontFamily: "Inter_600SemiBold",
+  },
+  selectedPlaceName: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: Colors.text,
+    fontFamily: "Inter_600SemiBold",
+  },
+  selectedPlaceAddress: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 16,
+  },
+  phoneHint: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 17,
+    marginTop: 8,
+    paddingHorizontal: 4,
+  },
+  submitBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: 14,
+    height: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 20,
+  },
+  submitBtnText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
   },
 });

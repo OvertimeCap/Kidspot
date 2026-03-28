@@ -1,10 +1,11 @@
 import { db } from "./db";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { eq, and, inArray, desc, ne } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
   favorites,
   users,
+  placeClaims,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -12,6 +13,8 @@ import {
   type Favorite,
   type User,
   type UserRole,
+  type PlaceClaim,
+  type InsertClaim,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -185,4 +188,172 @@ export async function updateUserRole(id: string, role: UserRole): Promise<User |
     .where(eq(users.id, id))
     .returning();
   return updated ?? null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Place Claims                                                         */
+/* ------------------------------------------------------------------ */
+
+export async function createClaim(
+  userId: string,
+  data: InsertClaim,
+): Promise<PlaceClaim> {
+  const [row] = await db
+    .insert(placeClaims)
+    .values({
+      user_id: userId,
+      place_id: data.place_id,
+      place_name: data.place_name,
+      place_address: data.place_address,
+      place_photo_reference: data.place_photo_reference ?? null,
+      contact_phone: data.contact_phone,
+    })
+    .returning();
+  return row;
+}
+
+export async function getClaimsForUser(userId: string): Promise<PlaceClaim[]> {
+  return db.query.placeClaims.findMany({
+    where: eq(placeClaims.user_id, userId),
+    orderBy: [desc(placeClaims.created_at)],
+  });
+}
+
+export async function listClaims(status?: string): Promise<(PlaceClaim & { user_name: string; user_email: string })[]> {
+  const conditions = status
+    ? and(eq(placeClaims.status, status as "pending" | "approved" | "denied"))
+    : undefined;
+
+  const rows = await db
+    .select({
+      id: placeClaims.id,
+      user_id: placeClaims.user_id,
+      place_id: placeClaims.place_id,
+      place_name: placeClaims.place_name,
+      place_address: placeClaims.place_address,
+      place_photo_reference: placeClaims.place_photo_reference,
+      contact_phone: placeClaims.contact_phone,
+      status: placeClaims.status,
+      admin_user_id: placeClaims.admin_user_id,
+      created_at: placeClaims.created_at,
+      reviewed_by: placeClaims.reviewed_by,
+      reviewed_at: placeClaims.reviewed_at,
+      user_name: users.name,
+      user_email: users.email,
+    })
+    .from(placeClaims)
+    .innerJoin(users, eq(placeClaims.user_id, users.id))
+    .where(conditions)
+    .orderBy(desc(placeClaims.created_at));
+
+  return rows;
+}
+
+export async function approveClaim(
+  claimId: string,
+  reviewerId: string,
+): Promise<{ claim: PlaceClaim; user: User }> {
+  return db.transaction(async (tx) => {
+    const claim = await tx.query.placeClaims.findFirst({
+      where: eq(placeClaims.id, claimId),
+    });
+    if (!claim) throw new Error("Reivindicação não encontrada");
+    if (claim.status !== "pending") throw new Error("Reivindicação já foi revisada");
+
+    const existingApproved = await tx.query.placeClaims.findFirst({
+      where: and(
+        eq(placeClaims.place_id, claim.place_id),
+        eq(placeClaims.status, "approved"),
+      ),
+    });
+    if (existingApproved) {
+      throw new Error("Este local já possui um administrador aprovado");
+    }
+
+    const [updatedClaim] = await tx
+      .update(placeClaims)
+      .set({
+        status: "approved",
+        admin_user_id: claim.user_id,
+        reviewed_by: reviewerId,
+        reviewed_at: new Date(),
+      })
+      .where(and(eq(placeClaims.id, claimId), eq(placeClaims.status, "pending")))
+      .returning();
+
+    if (!updatedClaim) throw new Error("Reivindicação já foi revisada por outro administrador");
+
+    const currentUser = await tx.query.users.findFirst({ where: eq(users.id, claim.user_id) });
+    if (!currentUser) throw new Error("Usuário solicitante não encontrado");
+    if (currentUser.linked_place_id) throw new Error("O usuário já possui um estabelecimento vinculado");
+
+    await tx
+      .update(placeClaims)
+      .set({
+        status: "denied",
+        reviewed_by: reviewerId,
+        reviewed_at: new Date(),
+      })
+      .where(
+        and(
+          eq(placeClaims.place_id, claim.place_id),
+          eq(placeClaims.status, "pending"),
+          ne(placeClaims.id, claimId),
+        ),
+      );
+
+    const [updatedUser] = await tx
+      .update(users)
+      .set({
+        role: "estabelecimento",
+        linked_place_id: claim.place_id,
+        linked_place_name: claim.place_name,
+        linked_place_address: claim.place_address,
+      })
+      .where(eq(users.id, claim.user_id))
+      .returning();
+
+    return { claim: updatedClaim, user: updatedUser };
+  });
+}
+
+export async function denyClaim(
+  claimId: string,
+  reviewerId: string,
+): Promise<PlaceClaim> {
+  const claim = await db.query.placeClaims.findFirst({
+    where: eq(placeClaims.id, claimId),
+  });
+  if (!claim) throw new Error("Reivindicação não encontrada");
+  if (claim.status !== "pending") throw new Error("Reivindicação já foi revisada");
+
+  const [updated] = await db
+    .update(placeClaims)
+    .set({
+      status: "denied",
+      reviewed_by: reviewerId,
+      reviewed_at: new Date(),
+    })
+    .where(eq(placeClaims.id, claimId))
+    .returning();
+
+  return updated;
+}
+
+export async function getApprovedAdminForPlace(placeId: string): Promise<string | null> {
+  const claim = await db.query.placeClaims.findFirst({
+    where: and(
+      eq(placeClaims.place_id, placeId),
+      eq(placeClaims.status, "approved"),
+    ),
+  });
+  return claim?.admin_user_id ?? null;
+}
+
+export async function getApprovedPlaceIds(): Promise<Set<string>> {
+  const rows = await db.query.placeClaims.findMany({
+    where: eq(placeClaims.status, "approved"),
+    columns: { place_id: true },
+  });
+  return new Set(rows.map((r) => r.place_id));
 }
