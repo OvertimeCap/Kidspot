@@ -17,6 +17,7 @@ export const userRoleEnum = pgEnum("user_role", [
   "admin",
   "colaborador",
   "parceiro",
+  "estabelecimento",
   "usuario",
 ]);
 
@@ -127,4 +128,4 @@ export type Favorite = typeof favorites.$inferSelect;
 export type InsertFavorite = z.infer<typeof insertFavoriteSchema>;
 
 export type User = typeof users.$inferSelect;
-export type UserRole = "admin" | "colaborador" | "parceiro" | "usuario";
+export type UserRole = "admin" | "colaborador" | "parceiro" | "estabelecimento" | "usuario";

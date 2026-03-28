@@ -12,8 +12,10 @@ import {
   findUserByEmail,
   verifyPassword,
   findOrCreateGoogleUser,
+  listUsers,
+  updateUserRole,
 } from "./storage";
-import { insertReviewSchema } from "@shared/schema";
+import { insertReviewSchema, type UserRole } from "@shared/schema";
 import { requireAuth, signToken, type AuthRequest } from "./auth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -372,6 +374,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ favorites: favList });
     } catch (err) {
       console.error("Get favorites error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — user management                                             */
+  /* ------------------------------------------------------------------ */
+
+  const ADMIN_ONLY_ROLES: UserRole[] = ["admin", "colaborador"];
+
+  app.get("/api/admin/users", requireAuth, async (req: AuthRequest, res: Response) => {
+    const callerRole = req.user!.role;
+    if (callerRole !== "admin" && callerRole !== "colaborador") {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+
+    try {
+      const userList = await listUsers();
+      const safe = userList.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        created_at: u.created_at,
+      }));
+      res.json({ users: safe });
+    } catch (err) {
+      console.error("List users error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const updateRoleSchema = z.object({
+    role: z.enum(["admin", "colaborador", "parceiro", "estabelecimento", "usuario"]),
+  });
+
+  app.patch("/api/admin/users/:id/role", requireAuth, async (req: AuthRequest, res: Response) => {
+    const callerRole = req.user!.role;
+    if (callerRole !== "admin" && callerRole !== "colaborador") {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+
+    const parsed = updateRoleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const targetRole = parsed.data.role as UserRole;
+
+    if (callerRole === "colaborador" && ADMIN_ONLY_ROLES.includes(targetRole)) {
+      res.status(403).json({ error: "Colaboradores não podem atribuir este perfil" });
+      return;
+    }
+
+    try {
+      const targetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const updated = await updateUserRole(targetId, targetRole);
+      if (!updated) {
+        res.status(404).json({ error: "Usuário não encontrado" });
+        return;
+      }
+      res.json({
+        user: {
+          id: updated.id,
+          name: updated.name,
+          email: updated.email,
+          role: updated.role,
+        },
+      });
+    } catch (err) {
+      console.error("Update role error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });

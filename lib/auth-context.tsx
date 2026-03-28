@@ -5,7 +5,7 @@ import { apiRequest, setAuthToken } from "@/lib/query-client";
 const TOKEN_STORAGE_KEY = "kidspot_auth_token";
 const USER_STORAGE_KEY = "kidspot_auth_user";
 
-export type UserRole = "admin" | "colaborador" | "parceiro" | "usuario";
+export type UserRole = "admin" | "colaborador" | "parceiro" | "estabelecimento" | "usuario";
 
 export interface AuthUser {
   id: string;
@@ -132,6 +132,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   admin: "Administrador",
   colaborador: "Colaborador",
   parceiro: "Parceiro",
+  estabelecimento: "Estabelecimento",
   usuario: "Usuário",
 };
 
@@ -139,5 +140,6 @@ export const ROLE_COLORS: Record<UserRole, string> = {
   admin: "#7C3AED",
   colaborador: "#2563EB",
   parceiro: "#D97706",
+  estabelecimento: "#0891B2",
   usuario: "#059669",
 };

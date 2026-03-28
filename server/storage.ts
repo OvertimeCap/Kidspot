@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, desc } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
@@ -11,6 +11,7 @@ import {
   type Review,
   type Favorite,
   type User,
+  type UserRole,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -167,4 +168,21 @@ export async function findOrCreateGoogleUser(data: {
     .values({ name: data.name, email: data.email.toLowerCase(), password_hash })
     .returning();
   return user;
+}
+
+export async function listUsers(limit = 100, offset = 0): Promise<User[]> {
+  return db.query.users.findMany({
+    orderBy: [desc(users.created_at)],
+    limit,
+    offset,
+  });
+}
+
+export async function updateUserRole(id: string, role: UserRole): Promise<User | null> {
+  const [updated] = await db
+    .update(users)
+    .set({ role })
+    .where(eq(users.id, id))
+    .returning();
+  return updated ?? null;
 }

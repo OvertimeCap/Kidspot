@@ -110,6 +110,22 @@ export default function PerfilScreen() {
         </View>
       </View>
 
+      {(user.role === "admin" || user.role === "colaborador") && (
+        <View style={[styles.section, { marginTop: 16 }]}>
+          <Text style={styles.sectionTitle}>Administração</Text>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-usuarios")}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="people-outline" size={22} color="#2563EB" />
+              <Text style={styles.adminCardText}>Gerenciar usuários</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
+        </View>
+      )}
+
       <View style={styles.spacer} />
 
       <View style={[styles.footer, { paddingBottom: bottomPad + 24 }]}>
@@ -327,6 +343,30 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: Colors.border,
     marginHorizontal: 16,
+  },
+  adminCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  adminCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  adminCardText: {
+    fontSize: 14,
+    color: Colors.text,
+    fontFamily: "Inter_500Medium",
   },
   spacer: { flex: 1 },
   footer: {
