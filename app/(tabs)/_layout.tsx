@@ -43,7 +43,8 @@ function ClassicTabLayout() {
           backgroundColor: isIOS ? "transparent" : isDark ? "#000" : "#fff",
           borderTopWidth: isWeb ? 1 : 0,
           borderTopColor: isDark ? "#333" : "#eee",
-          elevation: 0,
+          elevation: 8,
+          zIndex: 100,
           ...(isWeb ? { height: 84 } : {}),
         },
         tabBarBackground: () =>
