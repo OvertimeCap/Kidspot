@@ -82,3 +82,7 @@ outputType = "console"
 
 [userenv.shared]
 EXPO_PUBLIC_GOOGLE_CLIENT_ID = "1088606725732-ki7spf932r16hbsqm3bsumb9pi3isktg.apps.googleusercontent.com"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 120000

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   integer,
   jsonb,
   numeric,
@@ -113,6 +114,31 @@ export const placeClaims = pgTable("place_claims", {
   reviewed_at: timestamp("reviewed_at"),
 });
 
+export const partnerStories = pgTable("partner_stories", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  user_id: varchar("user_id")
+    .notNull()
+    .references(() => users.id),
+  place_id: text("place_id").notNull(),
+  place_name: text("place_name").notNull(),
+  expires_at: timestamp("expires_at").notNull(),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const storyPhotos = pgTable("story_photos", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  story_id: varchar("story_id")
+    .notNull()
+    .references(() => partnerStories.id),
+  photo_data: text("photo_data").notNull(),
+  order: integer("order").notNull().default(0),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const insertPlaceSchema = createInsertSchema(placesKidspot).omit({
   created_at: true,
 });
@@ -168,3 +194,6 @@ export type UserRole = "admin" | "colaborador" | "parceiro" | "estabelecimento" 
 
 export type PlaceClaim = typeof placeClaims.$inferSelect;
 export type InsertClaim = z.infer<typeof insertClaimSchema>;
+
+export type PartnerStory = typeof partnerStories.$inferSelect;
+export type StoryPhoto = typeof storyPhotos.$inferSelect;

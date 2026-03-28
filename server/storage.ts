@@ -1,11 +1,13 @@
 import { db } from "./db";
-import { eq, and, inArray, desc, ne } from "drizzle-orm";
+import { eq, and, inArray, desc, ne, gt } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
   favorites,
   users,
   placeClaims,
+  partnerStories,
+  storyPhotos,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -15,6 +17,8 @@ import {
   type UserRole,
   type PlaceClaim,
   type InsertClaim,
+  type PartnerStory,
+  type StoryPhoto,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -356,4 +360,126 @@ export async function getApprovedPlaceIds(): Promise<Set<string>> {
     columns: { place_id: true },
   });
   return new Set(rows.map((r) => r.place_id));
+}
+
+/* ------------------------------------------------------------------ */
+/* Partner Stories                                                       */
+/* ------------------------------------------------------------------ */
+
+export type StoryWithFirstPhoto = PartnerStory & {
+  first_photo_id: string | null;
+  user_role: string;
+};
+
+export async function createPartnerStory(
+  userId: string,
+  placeId: string,
+  placeName: string,
+  photoDataList: string[],
+): Promise<PartnerStory> {
+  if (photoDataList.length === 0) throw new Error("Pelo menos uma foto é obrigatória");
+  if (photoDataList.length > 10) throw new Error("Máximo de 10 fotos por story");
+
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+  return db.transaction(async (tx) => {
+    const [story] = await tx
+      .insert(partnerStories)
+      .values({ user_id: userId, place_id: placeId, place_name: placeName, expires_at: expiresAt })
+      .returning();
+
+    await tx.insert(storyPhotos).values(
+      photoDataList.map((photo_data, index) => ({
+        story_id: story.id,
+        photo_data,
+        order: index,
+      })),
+    );
+
+    return story;
+  });
+}
+
+export async function getActiveStoriesForPlaces(
+  placeIds: string[],
+): Promise<StoryWithFirstPhoto[]> {
+  if (placeIds.length === 0) return [];
+
+  const now = new Date();
+
+  const rows = await db
+    .select({
+      id: partnerStories.id,
+      user_id: partnerStories.user_id,
+      place_id: partnerStories.place_id,
+      place_name: partnerStories.place_name,
+      expires_at: partnerStories.expires_at,
+      created_at: partnerStories.created_at,
+      user_role: users.role,
+    })
+    .from(partnerStories)
+    .innerJoin(users, eq(partnerStories.user_id, users.id))
+    .where(
+      and(
+        inArray(partnerStories.place_id, placeIds),
+        gt(partnerStories.expires_at, now),
+      ),
+    )
+    .orderBy(desc(partnerStories.created_at));
+
+  if (rows.length === 0) return [];
+
+  const storyIds = rows.map((r) => r.id);
+  const firstPhotos = await db
+    .select({
+      story_id: storyPhotos.story_id,
+      id: storyPhotos.id,
+      order: storyPhotos.order,
+    })
+    .from(storyPhotos)
+    .where(inArray(storyPhotos.story_id, storyIds));
+
+  const firstPhotoMap = new Map<string, { id: string; order: number }>();
+  for (const photo of firstPhotos) {
+    const existing = firstPhotoMap.get(photo.story_id);
+    if (existing === undefined || photo.order < existing.order) {
+      firstPhotoMap.set(photo.story_id, { id: photo.id, order: photo.order });
+    }
+  }
+
+  const result: StoryWithFirstPhoto[] = rows.map((r) => ({
+    ...r,
+    first_photo_id: firstPhotoMap.get(r.id)?.id ?? null,
+    user_role: r.user_role,
+  }));
+
+  result.sort((a, b) => {
+    const roleOrder = (role: string) => (role === "parceiro" ? 0 : 1);
+    const diff = roleOrder(a.user_role) - roleOrder(b.user_role);
+    if (diff !== 0) return diff;
+    return b.created_at.getTime() - a.created_at.getTime();
+  });
+
+  return result;
+}
+
+export async function getStoryPhotos(storyId: string): Promise<StoryPhoto[]> {
+  return db.query.storyPhotos.findMany({
+    where: eq(storyPhotos.story_id, storyId),
+    orderBy: (p, { asc }) => [asc(p.order)],
+  });
+}
+
+export async function getStoryPhotoById(photoId: string): Promise<StoryPhoto | null> {
+  const photo = await db.query.storyPhotos.findFirst({
+    where: eq(storyPhotos.id, photoId),
+  });
+  return photo ?? null;
+}
+
+export async function getStoryById(storyId: string): Promise<PartnerStory | null> {
+  const story = await db.query.partnerStories.findFirst({
+    where: eq(partnerStories.id, storyId),
+  });
+  return story ?? null;
 }

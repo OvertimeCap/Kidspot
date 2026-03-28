@@ -217,3 +217,49 @@ export function formatDistance(km: number): string {
   if (km < 1) return `${Math.round(km * 1000)} m`;
   return `${km.toFixed(1)} km`;
 }
+
+/* ------------------------------------------------------------------ */
+/* Partner Stories                                                       */
+/* ------------------------------------------------------------------ */
+
+export type StoryItem = {
+  id: string;
+  user_id: string;
+  place_id: string;
+  place_name: string;
+  expires_at: string;
+  created_at: string;
+  first_photo_id: string | null;
+  user_role: string;
+};
+
+export type StoryPhotoRef = {
+  id: string;
+  order: number;
+};
+
+export function getStoryPhotoUrl(photoId: string): string {
+  const base = getApiUrl();
+  const url = new URL(`/api/stories/photo/${encodeURIComponent(photoId)}`, base);
+  return url.toString();
+}
+
+export async function fetchStories(placeIds: string[]): Promise<StoryItem[]> {
+  if (placeIds.length === 0) return [];
+  const res = await apiRequest(
+    "GET",
+    `/api/stories?place_ids=${encodeURIComponent(placeIds.join(","))}`,
+  );
+  const data = await res.json();
+  return data.stories ?? [];
+}
+
+export async function fetchStoryPhotos(storyId: string): Promise<StoryPhotoRef[]> {
+  const res = await apiRequest("GET", `/api/stories/${encodeURIComponent(storyId)}/photos`);
+  const data = await res.json();
+  return data.photos ?? [];
+}
+
+export async function createStory(photos: string[]): Promise<void> {
+  await apiRequest("POST", "/api/stories", { photos });
+}

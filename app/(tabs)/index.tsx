@@ -23,6 +23,7 @@ import {
   type PlaceWithScore,
 } from "@/lib/api";
 import { usePickedLocation } from "@/lib/picked-location-context";
+import StoriesRow, { type PlacePhotoMap } from "@/components/StoriesRow";
 
 type UserLocation = { lat: number; lng: number };
 type TypeFilter = "Todos" | "Restaurantes" | "Parques";
@@ -132,6 +133,8 @@ export default function HomeScreen() {
   const [locationDenied, setLocationDenied] = useState(false);
   const [searched, setSearched] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("Todos");
+  const [storyPlaceIds, setStoryPlaceIds] = useState<string[]>([]);
+  const [placePhotoRefs, setPlacePhotoRefs] = useState<PlacePhotoMap>({});
 
   const didAutoSearch = useRef(false);
 
@@ -142,6 +145,10 @@ export default function HomeScreen() {
       return place.types.some((t) => PARK_TYPES.has(t));
     return true;
   });
+
+  useEffect(() => {
+    setStoryPlaceIds(filteredResults.map((p) => p.place_id));
+  }, [filteredResults.map((p) => p.place_id).join(",")]);
 
   const doSearch = useCallback(
     async (lat: number, lng: number, label?: string) => {
@@ -165,6 +172,13 @@ export default function HomeScreen() {
           sortBy: "kidScore",
         });
         setResults(places);
+        const photoMap: PlacePhotoMap = {};
+        for (const p of places) {
+          if (p.photos && p.photos.length > 0) {
+            photoMap[p.place_id] = p.photos[0].photo_reference;
+          }
+        }
+        setPlacePhotoRefs(photoMap);
         setSearched(true);
         setUserLocation({ lat, lng });
         if (label) setActiveLabel(label);
@@ -289,55 +303,58 @@ export default function HomeScreen() {
             styles.listContent,
             { paddingBottom: Platform.OS === "web" ? 34 + 16 : insets.bottom + 16 },
           ]}
-          ListHeaderComponent={
-            <View style={styles.resultsHeader}>
-              <Text style={styles.resultsCount}>
-                {filteredResults.length > 0
-                  ? `${filteredResults.length} lugares encontrados`
-                  : "Nenhum lugar encontrado"}
-              </Text>
+          ListHeaderComponent={(
+            <View>
+              <StoriesRow placeIds={storyPlaceIds} placePhotoRefs={placePhotoRefs} />
+              <View style={styles.resultsHeader}>
+                <Text style={styles.resultsCount}>
+                  {filteredResults.length > 0
+                    ? `${filteredResults.length} lugares encontrados`
+                    : "Nenhum lugar encontrado"}
+                </Text>
 
-              {activeLabel && (
-                <View style={styles.locationRow}>
-                  <Ionicons name="location" size={13} color={Colors.primary} />
-                  <Text style={styles.locationLabel} numberOfLines={1}>
-                    {activeLabel}
-                  </Text>
-                </View>
-              )}
-
-              <View style={styles.filterRow}>
-                {(["Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
-                  <Pressable
-                    key={f}
-                    style={({ pressed }) => [
-                      styles.typeFilterBtn,
-                      typeFilter === f && styles.typeFilterBtnActive,
-                      pressed && styles.btnPressed,
-                    ]}
-                    onPress={() => setTypeFilter(typeFilter === f ? "Todos" : f)}
-                  >
-                    <Text
-                      style={[
-                        styles.typeFilterBtnText,
-                        typeFilter === f && styles.typeFilterBtnTextActive,
-                      ]}
-                    >
-                      {f}
+                {activeLabel && (
+                  <View style={styles.locationRow}>
+                    <Ionicons name="location" size={13} color={Colors.primary} />
+                    <Text style={styles.locationLabel} numberOfLines={1}>
+                      {activeLabel}
                     </Text>
-                  </Pressable>
-                ))}
+                  </View>
+                )}
 
-                <Pressable
-                  style={({ pressed }) => [styles.filtrosBtn, pressed && styles.btnPressed]}
-                  onPress={openFiltros}
-                >
-                  <Ionicons name="options-outline" size={15} color={Colors.primary} />
-                  <Text style={styles.filtrosBtnText}>Filtros</Text>
-                </Pressable>
+                <View style={styles.filterRow}>
+                  {(["Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
+                    <Pressable
+                      key={f}
+                      style={({ pressed }) => [
+                        styles.typeFilterBtn,
+                        typeFilter === f && styles.typeFilterBtnActive,
+                        pressed && styles.btnPressed,
+                      ]}
+                      onPress={() => setTypeFilter(typeFilter === f ? "Todos" : f)}
+                    >
+                      <Text
+                        style={[
+                          styles.typeFilterBtnText,
+                          typeFilter === f && styles.typeFilterBtnTextActive,
+                        ]}
+                      >
+                        {f}
+                      </Text>
+                    </Pressable>
+                  ))}
+
+                  <Pressable
+                    style={({ pressed }) => [styles.filtrosBtn, pressed && styles.btnPressed]}
+                    onPress={openFiltros}
+                  >
+                    <Ionicons name="options-outline" size={15} color={Colors.primary} />
+                    <Text style={styles.filtrosBtnText}>Filtros</Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
-          }
+          )}
           ListEmptyComponent={
             <View style={styles.centered}>
               <Ionicons name="sad-outline" size={48} color={Colors.textLight} />

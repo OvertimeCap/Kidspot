@@ -22,6 +22,11 @@ import {
   denyClaim,
   getApprovedAdminForPlace,
   getApprovedPlaceIds,
+  createPartnerStory,
+  getActiveStoriesForPlaces,
+  getStoryPhotos,
+  getStoryPhotoById,
+  getStoryById,
 } from "./storage";
 import { insertReviewSchema, insertClaimSchema, type UserRole } from "@shared/schema";
 import { requireAuth, signToken, type AuthRequest } from "./auth";
@@ -642,6 +647,159 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (err) {
       console.error("Update role error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Partner Stories                                                       */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/stories", async (req: AuthRequest, res: Response) => {
+    const placeIdsParam = req.query.place_ids as string | undefined;
+    if (!placeIdsParam) {
+      res.status(400).json({ error: "place_ids query parameter is required" });
+      return;
+    }
+
+    const placeIds = placeIdsParam.split(",").map((s) => s.trim()).filter(Boolean);
+    if (placeIds.length === 0) {
+      res.json({ stories: [] });
+      return;
+    }
+
+    try {
+      const stories = await getActiveStoriesForPlaces(placeIds);
+      res.json({ stories });
+    } catch (err) {
+      console.error("Get stories error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const ALLOWED_IMAGE_PREFIXES = [
+    "data:image/jpeg;base64,",
+    "data:image/jpg;base64,",
+    "data:image/png;base64,",
+    "data:image/webp;base64,",
+    "data:image/gif;base64,",
+  ];
+
+  const isValidImageDataUri = (s: string) =>
+    ALLOWED_IMAGE_PREFIXES.some((prefix) => s.startsWith(prefix));
+
+  const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+
+  const createStorySchema = z.object({
+    photos: z
+      .array(
+        z.string().refine(isValidImageDataUri, {
+          message: "Cada foto deve ser uma imagem válida (jpeg, png, webp)",
+        }),
+      )
+      .min(1)
+      .max(10)
+      .refine(
+        (photos) => photos.every((p) => Buffer.byteLength(p, "utf8") <= MAX_PHOTO_BYTES),
+        { message: "Cada foto deve ter no máximo 5 MB" },
+      ),
+  });
+
+  app.post("/api/stories", requireAuth, async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId;
+
+    const dbUser = await getUserById(userId);
+    if (!dbUser) {
+      res.status(401).json({ error: "Usuário não encontrado" });
+      return;
+    }
+
+    if (dbUser.role !== "parceiro" && dbUser.role !== "estabelecimento") {
+      res.status(403).json({ error: "Apenas parceiros e estabelecimentos podem publicar stories" });
+      return;
+    }
+
+    if (!dbUser.linked_place_id || !dbUser.linked_place_name) {
+      res.status(403).json({ error: "Você precisa ter um local vinculado para publicar stories" });
+      return;
+    }
+
+    const parsed = createStorySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    try {
+      const story = await createPartnerStory(
+        userId,
+        dbUser.linked_place_id,
+        dbUser.linked_place_name,
+        parsed.data.photos,
+      );
+      res.status(201).json({ story });
+    } catch (err) {
+      console.error("Create story error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/stories/:id/photos", async (req: AuthRequest, res: Response) => {
+    const storyId = req.params.id as string;
+
+    try {
+      const story = await getStoryById(storyId);
+      if (!story) {
+        res.status(404).json({ error: "Story não encontrado" });
+        return;
+      }
+
+      if (story.expires_at < new Date()) {
+        res.status(404).json({ error: "Story expirado" });
+        return;
+      }
+
+      const photos = await getStoryPhotos(storyId);
+      res.json({ photos: photos.map((p) => ({ id: p.id, order: p.order })) });
+    } catch (err) {
+      console.error("Get story photos error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/stories/photo/:photoId", async (req: AuthRequest, res: Response) => {
+    const photoId = req.params.photoId as string;
+
+    try {
+      const photo = await getStoryPhotoById(photoId);
+      if (!photo) {
+        res.status(404).json({ error: "Foto não encontrada" });
+        return;
+      }
+
+      const parentStory = await getStoryById(photo.story_id);
+      if (!parentStory || parentStory.expires_at < new Date()) {
+        res.status(404).json({ error: "Story expirado" });
+        return;
+      }
+
+      const base64Data = photo.photo_data;
+      const matches = base64Data.match(/^data:([A-Za-z-+/]+);base64,(.+)$/);
+
+      if (matches) {
+        const contentType = matches[1];
+        const buffer = Buffer.from(matches[2], "base64");
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        res.send(buffer);
+      } else {
+        const buffer = Buffer.from(base64Data, "base64");
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        res.send(buffer);
+      }
+    } catch (err) {
+      console.error("Get story photo error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
