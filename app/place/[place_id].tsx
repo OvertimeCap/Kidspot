@@ -279,6 +279,10 @@ export default function PlaceDetailsScreen() {
     place.photos && place.photos.length > 0
       ? getPhotoUrl(place.photos[0].photo_reference, 800)
       : null;
+  const extraPhotos =
+    place.photos && place.photos.length > 1
+      ? place.photos.slice(1, 3).map((p) => getPhotoUrl(p.photo_reference, 600))
+      : [];
   const category = getBestType(place.types);
 
   const avgRating =
@@ -368,6 +372,19 @@ export default function PlaceDetailsScreen() {
             </View>
           )}
         </View>
+
+        {extraPhotos.length > 0 && (
+          <View style={styles.photoGallery}>
+            {extraPhotos.map((uri, i) => (
+              <Image
+                key={i}
+                source={{ uri }}
+                style={styles.galleryPhoto}
+                contentFit="cover"
+              />
+            ))}
+          </View>
+        )}
 
         <View style={styles.infoRow}>
           <Ionicons name="location-outline" size={16} color={Colors.textSecondary} />
@@ -615,6 +632,17 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: Colors.text,
     fontFamily: "Inter_500Medium",
+  },
+  photoGallery: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 4,
+  },
+  galleryPhoto: {
+    flex: 1,
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: "#f0f0f0",
   },
   infoRow: {
     flexDirection: "row",
