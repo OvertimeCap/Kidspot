@@ -65,10 +65,14 @@ export default function CreateStoryScreen() {
 
     if (result.canceled) return;
 
+    const UNSUPPORTED_TYPES = ["image/heic", "image/heif", "image/heics", "image/heifs"];
     const newPhotos = result.assets
       .filter((a) => a.base64)
       .map((a) => {
-        const mimeType = a.mimeType ?? "image/jpeg";
+        const raw = (a.mimeType ?? "image/jpeg").toLowerCase();
+        // expo-image-picker converte HEIC para JPEG binário automaticamente,
+        // mas pode reportar o mimeType original — forçamos jpeg nesses casos
+        const mimeType = UNSUPPORTED_TYPES.includes(raw) ? "image/jpeg" : raw;
         return `data:${mimeType};base64,${a.base64}`;
       });
 

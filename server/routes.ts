@@ -683,6 +683,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "data:image/png;base64,",
     "data:image/webp;base64,",
     "data:image/gif;base64,",
+    "data:image/heic;base64,",
+    "data:image/heif;base64,",
   ];
 
   const isValidImageDataUri = (s: string) =>
