@@ -14,6 +14,7 @@ import {
   findOrCreateGoogleUser,
   listUsers,
   updateUserRole,
+  getUserById,
 } from "./storage";
 import { insertReviewSchema, type UserRole } from "@shared/schema";
 import { requireAuth, signToken, type AuthRequest } from "./auth";
@@ -426,24 +427,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const targetRole = parsed.data.role as UserRole;
 
-    if (callerRole === "colaborador" && ADMIN_ONLY_ROLES.includes(targetRole)) {
-      res.status(403).json({ error: "Colaboradores não podem atribuir este perfil" });
-      return;
-    }
-
     try {
-      const targetId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const updated = await updateUserRole(targetId, targetRole);
-      if (!updated) {
+      const userId = req.params.id as string;
+      const targetUser = await getUserById(userId);
+      if (!targetUser) {
         res.status(404).json({ error: "Usuário não encontrado" });
         return;
       }
+
+      if (callerRole === "colaborador") {
+        if (ADMIN_ONLY_ROLES.includes(targetUser.role)) {
+          res.status(403).json({ error: "Colaboradores não podem alterar perfis de administradores ou colaboradores" });
+          return;
+        }
+        if (ADMIN_ONLY_ROLES.includes(targetRole)) {
+          res.status(403).json({ error: "Colaboradores não podem atribuir este perfil" });
+          return;
+        }
+      }
+
+      const updated = await updateUserRole(userId, targetRole);
       res.json({
         user: {
-          id: updated.id,
-          name: updated.name,
-          email: updated.email,
-          role: updated.role,
+          id: updated!.id,
+          name: updated!.name,
+          email: updated!.email,
+          role: updated!.role,
         },
       });
     } catch (err) {
