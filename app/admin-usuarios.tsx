@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   Modal,
   Platform,
+  TextInput,
+  ScrollView,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +30,7 @@ interface ManagedUser {
 
 const ALL_ROLES: UserRole[] = ["admin", "colaborador", "parceiro", "estabelecimento", "usuario"];
 const COLABORADOR_ROLES: UserRole[] = ["usuario", "estabelecimento", "parceiro"];
+const FILTER_ROLES: Array<UserRole | "todos"> = ["todos", "admin", "colaborador", "parceiro", "estabelecimento", "usuario"];
 
 export default function AdminUsuariosScreen() {
   const insets = useSafeAreaInsets();
@@ -37,10 +40,22 @@ export default function AdminUsuariosScreen() {
 
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
   const [roleModalVisible, setRoleModalVisible] = useState(false);
+  const [searchEmail, setSearchEmail] = useState("");
+  const [filterRole, setFilterRole] = useState<UserRole | "todos">("todos");
 
   const { data, isLoading, isError } = useQuery<{ users: ManagedUser[] }>({
     queryKey: ["/api/admin/users"],
   });
+
+  const filteredUsers = useMemo(() => {
+    const all = data?.users ?? [];
+    return all.filter((u) => {
+      const matchesRole = filterRole === "todos" || u.role === filterRole;
+      const matchesEmail = searchEmail.trim() === "" ||
+        u.email.toLowerCase().includes(searchEmail.trim().toLowerCase());
+      return matchesRole && matchesEmail;
+    });
+  }, [data?.users, filterRole, searchEmail]);
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: UserRole }) => {
@@ -126,6 +141,10 @@ export default function AdminUsuariosScreen() {
     );
   }
 
+  const totalCount = data?.users?.length ?? 0;
+  const filteredCount = filteredUsers.length;
+  const isFiltering = filterRole !== "todos" || searchEmail.trim() !== "";
+
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
       <View style={styles.header}>
@@ -138,6 +157,77 @@ export default function AdminUsuariosScreen() {
         <Text style={styles.headerTitle}>Gerenciar usuários</Text>
         <View style={{ width: 40 }} />
       </View>
+
+      <View style={styles.searchBar}>
+        <Ionicons name="search-outline" size={18} color={Colors.textSecondary} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Buscar por e-mail..."
+          placeholderTextColor={Colors.textSecondary}
+          value={searchEmail}
+          onChangeText={setSearchEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+        />
+        {searchEmail.length > 0 && Platform.OS !== "ios" && (
+          <Pressable onPress={() => setSearchEmail("")} hitSlop={8}>
+            <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+          </Pressable>
+        )}
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filtersRow}
+      >
+        {FILTER_ROLES.map((role) => {
+          const isActive = filterRole === role;
+          const color = role === "todos" ? Colors.primary : ROLE_COLORS[role as UserRole];
+          return (
+            <Pressable
+              key={role}
+              style={({ pressed }) => [
+                styles.filterChip,
+                isActive && { backgroundColor: color, borderColor: color },
+                pressed && { opacity: 0.8 },
+              ]}
+              onPress={() => setFilterRole(role)}
+            >
+              {role !== "todos" && (
+                <View style={[
+                  styles.filterChipDot,
+                  { backgroundColor: isActive ? "#fff" : color },
+                ]} />
+              )}
+              <Text style={[
+                styles.filterChipText,
+                isActive && { color: "#fff" },
+                !isActive && role !== "todos" && { color },
+              ]}>
+                {role === "todos" ? "Todos" : ROLE_LABELS[role as UserRole]}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {!isLoading && !isError && (
+        <View style={styles.countRow}>
+          <Text style={styles.countText}>
+            {isFiltering
+              ? `${filteredCount} de ${totalCount} usuário${totalCount !== 1 ? "s" : ""}`
+              : `${totalCount} usuário${totalCount !== 1 ? "s" : ""}`}
+          </Text>
+          {isFiltering && (
+            <Pressable onPress={() => { setFilterRole("todos"); setSearchEmail(""); }}>
+              <Text style={styles.clearFilters}>Limpar filtros</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
 
       {isLoading && (
         <View style={styles.centered}>
@@ -154,15 +244,20 @@ export default function AdminUsuariosScreen() {
 
       {!isLoading && !isError && (
         <FlatList
-          data={data?.users ?? []}
+          data={filteredUsers}
           keyExtractor={(u) => u.id}
           renderItem={renderUser}
           contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           ListEmptyComponent={
             <View style={styles.centered}>
-              <Ionicons name="people-outline" size={48} color={Colors.border} />
-              <Text style={styles.emptyText}>Nenhum usuário encontrado</Text>
+              <Ionicons name="search-outline" size={48} color={Colors.border} />
+              <Text style={styles.emptyText}>
+                {isFiltering
+                  ? "Nenhum usuário encontrado\ncom esses filtros"
+                  : "Nenhum usuário encontrado"}
+              </Text>
             </View>
           }
         />
@@ -245,6 +340,72 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontFamily: "Inter_700Bold",
   },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text,
+    fontFamily: "Inter_400Regular",
+    padding: 0,
+  },
+  filtersRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    flexDirection: "row",
+  },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: "#fff",
+  },
+  filterChipDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.textSecondary,
+  },
+  countRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingBottom: 6,
+  },
+  countText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+  },
+  clearFilters: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontFamily: "Inter_600SemiBold",
+  },
   centered: {
     flex: 1,
     alignItems: "center",
@@ -263,9 +424,10 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: "center",
     fontFamily: "Inter_400Regular",
+    lineHeight: 22,
   },
   list: {
-    padding: 16,
+    paddingVertical: 4,
     gap: 0,
   },
   separator: {
@@ -280,7 +442,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 12,
-    borderRadius: 0,
   },
   userAvatar: {
     width: 44,
