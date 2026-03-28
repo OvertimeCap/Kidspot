@@ -464,22 +464,27 @@ export async function getActiveStoriesForPlaces(
 }
 
 export async function getStoryPhotos(storyId: string): Promise<StoryPhoto[]> {
-  return db.query.storyPhotos.findMany({
-    where: eq(storyPhotos.story_id, storyId),
-    orderBy: (p, { asc }) => [asc(p.order)],
-  });
+  return db
+    .select()
+    .from(storyPhotos)
+    .where(eq(storyPhotos.story_id, storyId))
+    .orderBy(storyPhotos.order);
 }
 
 export async function getStoryPhotoById(photoId: string): Promise<StoryPhoto | null> {
-  const photo = await db.query.storyPhotos.findFirst({
-    where: eq(storyPhotos.id, photoId),
-  });
+  const [photo] = await db
+    .select()
+    .from(storyPhotos)
+    .where(eq(storyPhotos.id, photoId))
+    .limit(1);
   return photo ?? null;
 }
 
 export async function getStoryById(storyId: string): Promise<PartnerStory | null> {
-  const story = await db.query.partnerStories.findFirst({
-    where: eq(partnerStories.id, storyId),
-  });
+  const [story] = await db
+    .select()
+    .from(partnerStories)
+    .where(eq(partnerStories.id, storyId))
+    .limit(1);
   return story ?? null;
 }
