@@ -45,10 +45,6 @@ export default function AdminUsuariosScreen() {
   const updateRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: UserRole }) => {
       const res = await apiRequest("PATCH", `/api/admin/users/${userId}/role`, { role });
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error ?? "Erro ao atualizar perfil");
-      }
       return res.json();
     },
     onSuccess: () => {

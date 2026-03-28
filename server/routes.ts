@@ -120,8 +120,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/auth/me", requireAuth, (req: AuthRequest, res: Response) => {
-    res.json({ user: req.user });
+  app.get("/api/auth/me", requireAuth, async (req: AuthRequest, res: Response) => {
+    const dbUser = await getUserById(req.user!.userId);
+    if (!dbUser) {
+      res.status(401).json({ error: "Usuário não encontrado" });
+      return;
+    }
+    res.json({
+      user: {
+        userId: dbUser.id,
+        email: dbUser.email,
+        role: dbUser.role,
+        name: dbUser.name,
+      },
+    });
   });
 
   const googleSchema = z.object({ accessToken: z.string().min(1) });
