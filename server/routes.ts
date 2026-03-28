@@ -386,8 +386,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const ADMIN_ONLY_ROLES: UserRole[] = ["admin", "colaborador"];
 
   app.get("/api/admin/users", requireAuth, async (req: AuthRequest, res: Response) => {
-    const callerRole = req.user!.role;
-    if (callerRole !== "admin" && callerRole !== "colaborador") {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
       res.status(403).json({ error: "Acesso negado" });
       return;
     }
@@ -413,8 +413,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.patch("/api/admin/users/:id/role", requireAuth, async (req: AuthRequest, res: Response) => {
-    const callerRole = req.user!.role;
-    if (callerRole !== "admin" && callerRole !== "colaborador") {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
       res.status(403).json({ error: "Acesso negado" });
       return;
     }
@@ -435,7 +435,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
-      if (callerRole === "colaborador") {
+      if (caller.role === "colaborador") {
         if (ADMIN_ONLY_ROLES.includes(targetUser.role)) {
           res.status(403).json({ error: "Colaboradores não podem alterar perfis de administradores ou colaboradores" });
           return;

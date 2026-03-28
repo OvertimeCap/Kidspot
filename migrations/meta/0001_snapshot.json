@@ -1,6 +1,6 @@
 {
-  "id": "cf7c34e6-6190-4115-b0ba-ae84318251b4",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "a2f2f5e2-db4b-4355-a9d1-a9e5aabbc7c3",
+  "prevId": "cf7c34e6-6190-4115-b0ba-ae84318251b4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -343,6 +343,7 @@
         "admin",
         "colaborador",
         "parceiro",
+        "estabelecimento",
         "usuario"
       ]
     }
