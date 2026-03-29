@@ -17,6 +17,7 @@ import {
   fetchStories,
   fetchStoriesNearby,
   getPhotoUrl,
+  getStoryPhotoUrl,
   type StoryItem,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -51,7 +52,11 @@ interface StoryCircleProps {
 }
 
 function StoryCircle({ story, seen, photoRef, onPress }: StoryCircleProps) {
-  const photoUrl = photoRef ? getPhotoUrl(photoRef, 200) : null;
+  const photoUrl = photoRef
+    ? getPhotoUrl(photoRef, 200)
+    : story.first_photo_id
+    ? getStoryPhotoUrl(story.first_photo_id)
+    : null;
 
   const ringColor = seen
     ? "#CCCCCC"
