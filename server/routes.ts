@@ -755,16 +755,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      let placeLat: number | undefined;
-      let placeLng: number | undefined;
+      let placeLat: number;
+      let placeLng: number;
       try {
         const details = await getPlaceDetails(dbUser.linked_place_id);
-        if (details?.location) {
-          placeLat = details.location.lat;
-          placeLng = details.location.lng;
+        if (!details?.location?.lat || !details?.location?.lng) {
+          res.status(422).json({ error: "Não foi possível obter as coordenadas do seu local. Tente novamente." });
+          return;
         }
+        placeLat = details.location.lat;
+        placeLng = details.location.lng;
       } catch {
-        // Non-fatal: story will be created without coordinates
+        res.status(422).json({ error: "Não foi possível obter as coordenadas do seu local. Verifique sua conexão e tente novamente." });
+        return;
       }
 
       const story = await createPartnerStory(
