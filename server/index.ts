@@ -85,8 +85,12 @@ function setupRequestLogging(app: express.Application) {
 
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        const isAuthRoute = path.startsWith("/api/auth/login") || path.startsWith("/api/auth/register");
-        const safeResponse = isAuthRoute
+        const isAuthRoute =
+          path.startsWith("/api/auth/login") ||
+          path.startsWith("/api/auth/register") ||
+          path.startsWith("/api/admin/auth/login");
+        const hasToken = capturedJsonResponse && "token" in capturedJsonResponse;
+        const safeResponse = isAuthRoute || hasToken
           ? { ...capturedJsonResponse, token: capturedJsonResponse.token ? "[REDACTED]" : undefined }
           : capturedJsonResponse;
         logLine += ` :: ${JSON.stringify(safeResponse)}`;
@@ -166,6 +170,30 @@ function serveLandingPage({
   res.status(200).send(html);
 }
 
+function serveAdminPanel(app: express.Application) {
+  const adminTemplatePath = path.resolve(
+    process.cwd(),
+    "server",
+    "templates",
+    "admin.html",
+  );
+
+  if (!fs.existsSync(adminTemplatePath)) {
+    log("Admin template not found, skipping /admin route");
+    return;
+  }
+
+  const adminHtml = fs.readFileSync(adminTemplatePath, "utf-8");
+
+  // Serve admin panel at /admin and /admin/*
+  app.use("/admin", (req: Request, res: Response) => {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.status(200).send(adminHtml);
+  });
+
+  log("Admin panel served at /admin");
+}
+
 function configureExpoAndLanding(app: express.Application) {
   const isDev = process.env.NODE_ENV !== "production";
 
@@ -178,7 +206,7 @@ function configureExpoAndLanding(app: express.Application) {
       target: "http://localhost:8081",
       changeOrigin: true,
       ws: true,
-      pathFilter: (path) => !path.startsWith("/api"),
+      pathFilter: (path) => !path.startsWith("/api") && !path.startsWith("/admin"),
       on: {
         proxyReq: (proxyReq) => {
           proxyReq.removeHeader("origin");
@@ -200,6 +228,7 @@ function configureExpoAndLanding(app: express.Application) {
     // Handle native Expo manifests (Expo Go on device) before proxying
     app.use((req: Request, res: Response, next: NextFunction) => {
       if (req.path.startsWith("/api")) return next();
+      if (req.path.startsWith("/admin")) return next();
       const platform = req.header("expo-platform");
       if (platform && (platform === "ios" || platform === "android")) {
         return serveExpoManifest(platform, res);
@@ -271,6 +300,7 @@ function setupErrorHandler(app: express.Application) {
   setupBodyParsing(app);
   setupRequestLogging(app);
 
+  serveAdminPanel(app);
   configureExpoAndLanding(app);
 
   const server = await registerRoutes(app);

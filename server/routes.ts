@@ -30,12 +30,80 @@ import {
   getStoryById,
 } from "./storage";
 import { insertReviewSchema, insertClaimSchema, type UserRole } from "@shared/schema";
-import { requireAuth, signToken, type AuthRequest } from "./auth";
+import { requireAuth, requireAdmin, signToken, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/health", (_req: AuthRequest, res: Response) => {
     res.json({ ok: true });
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin backoffice auth                                                */
+  /* ------------------------------------------------------------------ */
+
+  const adminLoginSchema = z.object({
+    email: z.string().email(),
+    password: z.string().min(1),
+  });
+
+  app.post("/api/admin/auth/login", async (req: AuthRequest, res: Response) => {
+    const parsed = adminLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const { email, password } = parsed.data;
+
+    try {
+      const user = await findUserByEmail(email.toLowerCase());
+      if (!user) {
+        res.status(401).json({ error: "Credenciais inválidas" });
+        return;
+      }
+
+      const valid = await verifyPassword(password, user.password_hash);
+      if (!valid) {
+        res.status(401).json({ error: "Credenciais inválidas" });
+        return;
+      }
+
+      if (user.role !== "admin") {
+        res.status(403).json({ error: "Acesso restrito a administradores" });
+        return;
+      }
+
+      const token = signToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+      res.json({
+        token,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      });
+    } catch (err) {
+      console.error("Admin login error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/admin/auth/me", requireAdmin, async (req: AuthRequest, res: Response) => {
+    const dbUser = await getUserById(req.user!.userId);
+    if (!dbUser) {
+      res.status(401).json({ error: "Usuário não encontrado" });
+      return;
+    }
+    res.json({
+      user: {
+        id: dbUser.id,
+        name: dbUser.name,
+        email: dbUser.email,
+        role: dbUser.role,
+      },
+    });
   });
 
   app.get("/api/kidspot/ping-db", async (_req: AuthRequest, res: Response) => {

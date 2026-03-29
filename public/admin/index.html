@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KidSpot Admin</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      :root {
+        --primary: #FF6B35;
+        --primary-dark: #e85a24;
+        --primary-light: #fff3ef;
+        --secondary: #4ECDC4;
+        --accent: #FFE66D;
+        --bg: #f7f8fa;
+        --surface: #ffffff;
+        --border: #e8eaed;
+        --text: #1a1a2e;
+        --text-muted: #6b7280;
+        --sidebar-w: 260px;
+        --header-h: 60px;
+        --radius: 12px;
+        --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04);
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.5;
+        min-height: 100vh;
+      }
+
+      /* ===== LOGIN PAGE ===== */
+      #login-page {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 24px;
+        background: linear-gradient(135deg, #fff3ef 0%, #fff8f5 50%, #f0fffe 100%);
+      }
+
+      .login-card {
+        background: var(--surface);
+        border-radius: var(--radius);
+        box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+        padding: 48px 40px;
+        width: 100%;
+        max-width: 420px;
+      }
+
+      .login-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 32px;
+      }
+
+      .login-logo-icon {
+        width: 40px;
+        height: 40px;
+        background: var(--primary);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+      }
+
+      .login-logo-text {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .login-logo-badge {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--primary);
+        background: var(--primary-light);
+        border-radius: 4px;
+        padding: 2px 6px;
+        margin-left: 2px;
+        vertical-align: middle;
+      }
+
+      .login-title {
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 6px;
+      }
+
+      .login-subtitle {
+        font-size: 14px;
+        color: var(--text-muted);
+        margin-bottom: 28px;
+      }
+
+      .form-group {
+        margin-bottom: 18px;
+      }
+
+      .form-label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text);
+        margin-bottom: 6px;
+      }
+
+      .form-input {
+        width: 100%;
+        padding: 11px 14px;
+        border: 1.5px solid var(--border);
+        border-radius: 8px;
+        font-size: 15px;
+        color: var(--text);
+        background: var(--surface);
+        transition: border-color 0.15s;
+        outline: none;
+      }
+
+      .form-input:focus {
+        border-color: var(--primary);
+      }
+
+      .btn-primary {
+        width: 100%;
+        padding: 12px;
+        background: var(--primary);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s, opacity 0.15s;
+        margin-top: 8px;
+      }
+
+      .btn-primary:hover { background: var(--primary-dark); }
+      .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+      .error-msg {
+        background: #fef2f2;
+        color: #dc2626;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 13px;
+        margin-bottom: 16px;
+        display: none;
+      }
+
+      /* ===== APP SHELL ===== */
+      #app-shell {
+        display: none;
+        min-height: 100vh;
+      }
+
+      /* SIDEBAR */
+      .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: var(--sidebar-w);
+        height: 100vh;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        z-index: 100;
+        overflow-y: auto;
+      }
+
+      .sidebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 20px 20px 16px;
+        border-bottom: 1px solid var(--border);
+        text-decoration: none;
+      }
+
+      .sidebar-brand-icon {
+        width: 34px;
+        height: 34px;
+        background: var(--primary);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        flex-shrink: 0;
+      }
+
+      .sidebar-brand-name {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .sidebar-brand-sub {
+        font-size: 11px;
+        color: var(--text-muted);
+        font-weight: 400;
+      }
+
+      .sidebar-nav {
+        padding: 12px 0;
+        flex: 1;
+      }
+
+      .sidebar-section-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+        padding: 10px 20px 4px;
+      }
+
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 20px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-decoration: none;
+        border-radius: 0;
+        cursor: pointer;
+        transition: background 0.12s, color 0.12s;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+      }
+
+      .nav-item:hover {
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .nav-item.active {
+        background: var(--primary-light);
+        color: var(--primary);
+      }
+
+      .nav-item.active .nav-icon {
+        color: var(--primary);
+      }
+
+      .nav-icon {
+        font-size: 18px;
+        width: 22px;
+        text-align: center;
+        flex-shrink: 0;
+      }
+
+      .sidebar-footer {
+        padding: 12px 16px;
+        border-top: 1px solid var(--border);
+      }
+
+      .admin-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px;
+        border-radius: 8px;
+        margin-bottom: 8px;
+      }
+
+      .admin-avatar {
+        width: 32px;
+        height: 32px;
+        background: var(--primary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        flex-shrink: 0;
+      }
+
+      .admin-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      .admin-role {
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+
+      .btn-logout {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.12s;
+      }
+
+      .btn-logout:hover {
+        background: #fef2f2;
+        color: #dc2626;
+        border-color: #fecaca;
+      }
+
+      /* MAIN AREA */
+      .main {
+        margin-left: var(--sidebar-w);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .topbar {
+        height: var(--header-h);
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 28px;
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        gap: 12px;
+      }
+
+      .topbar-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text);
+        flex: 1;
+      }
+
+      .topbar-admin {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .topbar-admin-name {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+
+      .topbar-avatar {
+        width: 30px;
+        height: 30px;
+        background: var(--primary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        flex-shrink: 0;
+      }
+
+      .topbar-logout {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.12s;
+      }
+
+      .topbar-logout:hover {
+        background: #fef2f2;
+        color: #dc2626;
+        border-color: #fecaca;
+      }
+
+      .content {
+        padding: 28px;
+        flex: 1;
+      }
+
+      /* DASHBOARD */
+      .welcome-banner {
+        background: linear-gradient(135deg, var(--primary) 0%, #ff8c5a 100%);
+        border-radius: var(--radius);
+        padding: 28px 32px;
+        color: #fff;
+        margin-bottom: 28px;
+      }
+
+      .welcome-banner h2 {
+        font-size: 22px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .welcome-banner p {
+        font-size: 14px;
+        opacity: 0.85;
+      }
+
+      .modules-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 16px;
+      }
+
+      .module-card {
+        background: var(--surface);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        padding: 20px;
+        cursor: pointer;
+        transition: box-shadow 0.15s, border-color 0.15s, transform 0.1s;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+      }
+
+      .module-card:hover {
+        box-shadow: var(--shadow);
+        border-color: var(--primary);
+        transform: translateY(-1px);
+      }
+
+      .module-card-icon {
+        font-size: 28px;
+        margin-bottom: 12px;
+        display: block;
+      }
+
+      .module-card-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 4px;
+      }
+
+      .module-card-desc {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      /* MODULE PAGE (placeholder) */
+      .module-placeholder {
+        background: var(--surface);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        padding: 48px 32px;
+        text-align: center;
+        max-width: 480px;
+        margin: 0 auto;
+      }
+
+      .module-placeholder-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        display: block;
+      }
+
+      .module-placeholder h3 {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 8px;
+      }
+
+      .module-placeholder p {
+        font-size: 14px;
+        color: var(--text-muted);
+      }
+
+      .badge-soon {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 100px;
+        background: #f3f4f6;
+        color: var(--text-muted);
+        margin-top: 12px;
+      }
+
+      /* SPINNER */
+      .spinner-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 200px;
+      }
+
+      .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--border);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* RESPONSIVE */
+      @media (max-width: 768px) {
+        .sidebar { transform: translateX(-100%); transition: transform 0.2s; }
+        .sidebar.open { transform: translateX(0); }
+        .main { margin-left: 0; }
+        .topbar { padding: 0 16px; }
+        .content { padding: 16px; }
+        .modules-grid { grid-template-columns: 1fr 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- LOGIN PAGE -->
+    <div id="login-page">
+      <div class="login-card">
+        <div class="login-logo">
+          <div class="login-logo-icon">🐣</div>
+          <div>
+            <span class="login-logo-text">KidSpot</span>
+            <span class="login-logo-badge">Admin</span>
+          </div>
+        </div>
+        <div class="login-title">Acesso ao painel</div>
+        <div class="login-subtitle">Entre com suas credenciais de administrador</div>
+
+        <div class="error-msg" id="login-error"></div>
+
+        <form id="login-form">
+          <div class="form-group">
+            <label class="form-label" for="email">E-mail</label>
+            <input
+              class="form-input"
+              type="email"
+              id="email"
+              name="email"
+              placeholder="admin@kidspot.com.br"
+              autocomplete="email"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="password">Senha</label>
+            <input
+              class="form-input"
+              type="password"
+              id="password"
+              name="password"
+              placeholder="••••••••"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+          <button type="submit" class="btn-primary" id="login-btn">Entrar</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- APP SHELL -->
+    <div id="app-shell">
+      <!-- SIDEBAR -->
+      <nav class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+          <div class="sidebar-brand-icon">🐣</div>
+          <div>
+            <div class="sidebar-brand-name">KidSpot</div>
+            <div class="sidebar-brand-sub">Painel Admin</div>
+          </div>
+        </div>
+
+        <div class="sidebar-nav">
+          <div class="sidebar-section-label">Visão geral</div>
+          <button class="nav-item active" data-page="dashboard">
+            <span class="nav-icon">🏠</span>
+            Dashboard
+          </button>
+
+          <div class="sidebar-section-label">Conteúdo</div>
+          <button class="nav-item" data-page="locais">
+            <span class="nav-icon">📍</span>
+            Locais
+          </button>
+          <button class="nav-item" data-page="avaliacoes">
+            <span class="nav-icon">⭐</span>
+            Avaliações
+          </button>
+          <button class="nav-item" data-page="stories">
+            <span class="nav-icon">📸</span>
+            Stories
+          </button>
+
+          <div class="sidebar-section-label">Gestão</div>
+          <button class="nav-item" data-page="usuarios">
+            <span class="nav-icon">👥</span>
+            Usuários
+          </button>
+          <button class="nav-item" data-page="claims">
+            <span class="nav-icon">🏢</span>
+            Solicitações de Vínculo
+          </button>
+          <button class="nav-item" data-page="parceiros">
+            <span class="nav-icon">🤝</span>
+            Parceiros
+          </button>
+
+          <div class="sidebar-section-label">Sistema</div>
+          <button class="nav-item" data-page="moderacao">
+            <span class="nav-icon">🛡️</span>
+            Moderação
+          </button>
+          <button class="nav-item" data-page="notificacoes">
+            <span class="nav-icon">🔔</span>
+            Notificações
+          </button>
+          <button class="nav-item" data-page="configuracoes">
+            <span class="nav-icon">⚙️</span>
+            Configurações
+          </button>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="admin-info">
+            <div class="admin-avatar" id="admin-avatar">A</div>
+            <div>
+              <div class="admin-name" id="admin-name">Administrador</div>
+              <div class="admin-role">admin</div>
+            </div>
+          </div>
+          <button class="btn-logout" id="logout-btn">
+            <span>↩</span>
+            Sair
+          </button>
+        </div>
+      </nav>
+
+      <!-- MAIN AREA -->
+      <main class="main">
+        <div class="topbar">
+          <span class="topbar-title" id="page-title">Dashboard</span>
+          <div class="topbar-admin">
+            <div class="topbar-avatar" id="topbar-avatar">A</div>
+            <span class="topbar-admin-name" id="topbar-admin-name">Admin</span>
+          </div>
+          <button class="topbar-logout" id="topbar-logout-btn">
+            <span>↩</span>
+            Sair
+          </button>
+        </div>
+        <div class="content" id="page-content">
+          <div class="spinner-wrap"><div class="spinner"></div></div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        const STORAGE_KEY = 'kidspot_admin_token';
+
+        // When served via the Expo/Metro preview (port 80), API calls must go to
+        // Express on port 5000. When served directly from Express, use relative path.
+        const API_BASE = (function () {
+          const p = window.location.port;
+          if (!p || p === '80' || p === '443') {
+            return 'https://' + window.location.hostname + ':5000/api';
+          }
+          return '/api';
+        })();
+
+        // ===== STATE =====
+        let currentToken = localStorage.getItem(STORAGE_KEY);
+        let currentPage = 'dashboard';
+        let adminUser = null;
+
+        // ===== MODULES CONFIG =====
+        const MODULES = [
+          { id: 'locais',        icon: '📍', title: 'Locais',                    desc: 'Gerenciar estabelecimentos cadastrados' },
+          { id: 'avaliacoes',    icon: '⭐', title: 'Avaliações',                desc: 'Moderar avaliações dos usuários' },
+          { id: 'stories',       icon: '📸', title: 'Stories',                   desc: 'Gerenciar stories de parceiros' },
+          { id: 'usuarios',      icon: '👥', title: 'Usuários',                   desc: 'Gerenciar contas e perfis' },
+          { id: 'claims',        icon: '🏢', title: 'Solicitações de Vínculo',   desc: 'Aprovar ou recusar vínculos com estabelecimentos' },
+          { id: 'parceiros',     icon: '🤝', title: 'Parceiros',                  desc: 'Gerenciar parceiros e benefícios' },
+          { id: 'moderacao',     icon: '🛡️', title: 'Moderação',                 desc: 'Conteúdo sinalizado para revisão' },
+          { id: 'notificacoes',  icon: '🔔', title: 'Notificações',              desc: 'Enviar avisos e campanhas' },
+          { id: 'configuracoes', icon: '⚙️', title: 'Configurações',             desc: 'Ajustes gerais do sistema' },
+        ];
+
+        const PAGE_TITLES = {
+          dashboard:     'Dashboard',
+          locais:        'Locais',
+          avaliacoes:    'Avaliações',
+          stories:       'Stories',
+          usuarios:      'Usuários',
+          claims:        'Solicitações de Vínculo',
+          parceiros:     'Parceiros',
+          moderacao:     'Moderação',
+          notificacoes:  'Notificações',
+          configuracoes: 'Configurações',
+        };
+
+        // ===== DOM REFS =====
+        const loginPage  = document.getElementById('login-page');
+        const appShell   = document.getElementById('app-shell');
+        const loginForm  = document.getElementById('login-form');
+        const loginError = document.getElementById('login-error');
+        const loginBtn   = document.getElementById('login-btn');
+        const logoutBtn      = document.getElementById('logout-btn');
+        const topbarLogoutBtn= document.getElementById('topbar-logout-btn');
+        const adminName      = document.getElementById('admin-name');
+        const adminAvatar    = document.getElementById('admin-avatar');
+        const topbarAdminName= document.getElementById('topbar-admin-name');
+        const topbarAvatar   = document.getElementById('topbar-avatar');
+        const pageTitle      = document.getElementById('page-title');
+        const pageContent    = document.getElementById('page-content');
+        const navItems       = document.querySelectorAll('.nav-item[data-page]');
+
+        // ===== API =====
+        async function apiFetch(path, opts = {}) {
+          const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+          if (currentToken) headers['Authorization'] = 'Bearer ' + currentToken;
+          const res = await fetch(API_BASE + path, { ...opts, headers });
+          return res;
+        }
+
+        // ===== AUTH =====
+        loginForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          loginError.style.display = 'none';
+          loginBtn.disabled = true;
+          loginBtn.textContent = 'Entrando…';
+
+          const email    = document.getElementById('email').value.trim();
+          const password = document.getElementById('password').value;
+
+          try {
+            const res  = await apiFetch('/admin/auth/login', {
+              method: 'POST',
+              body: JSON.stringify({ email, password }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+              showError(data.error || 'Erro ao autenticar');
+              return;
+            }
+
+            currentToken = data.token;
+            adminUser    = data.user;
+            localStorage.setItem(STORAGE_KEY, currentToken);
+            enterShell();
+          } catch (err) {
+            showError('Erro de conexão. Tente novamente.');
+          } finally {
+            loginBtn.disabled = false;
+            loginBtn.textContent = 'Entrar';
+          }
+        });
+
+        function showError(msg) {
+          loginError.textContent = msg;
+          loginError.style.display = 'block';
+        }
+
+        function doLogout() {
+          currentToken = null;
+          adminUser    = null;
+          localStorage.removeItem(STORAGE_KEY);
+          showLogin();
+        }
+
+        logoutBtn.addEventListener('click', doLogout);
+        topbarLogoutBtn.addEventListener('click', doLogout);
+
+        // ===== NAVIGATION =====
+        navItems.forEach(item => {
+          item.addEventListener('click', () => {
+            const page = item.dataset.page;
+            navigateTo(page);
+          });
+        });
+
+        function navigateTo(page) {
+          currentPage = page;
+
+          navItems.forEach(item => {
+            item.classList.toggle('active', item.dataset.page === page);
+          });
+
+          pageTitle.textContent = PAGE_TITLES[page] || page;
+          renderPage(page);
+        }
+
+        // ===== RENDER =====
+        function renderPage(page) {
+          if (page === 'dashboard') {
+            renderDashboard();
+          } else {
+            renderModulePlaceholder(page);
+          }
+        }
+
+        function renderDashboard() {
+          const name = adminUser ? adminUser.name.split(' ')[0] : 'Admin';
+          pageContent.innerHTML = `
+            <div class="welcome-banner">
+              <h2>Olá, ${escapeHtml(name)}! 👋</h2>
+              <p>Bem-vindo ao painel de administração do KidSpot. Selecione um módulo para começar.</p>
+            </div>
+            <div class="modules-grid">
+              ${MODULES.map(m => `
+                <div class="module-card" data-page="${m.id}">
+                  <span class="module-card-icon">${m.icon}</span>
+                  <div class="module-card-title">${m.title}</div>
+                  <div class="module-card-desc">${m.desc}</div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+
+          pageContent.querySelectorAll('.module-card[data-page]').forEach(card => {
+            card.addEventListener('click', () => navigateTo(card.dataset.page));
+          });
+        }
+
+        function renderModulePlaceholder(page) {
+          const mod = MODULES.find(m => m.id === page);
+          if (!mod) return;
+          pageContent.innerHTML = `
+            <div class="module-placeholder">
+              <span class="module-placeholder-icon">${mod.icon}</span>
+              <h3>${mod.title}</h3>
+              <p>${mod.desc}</p>
+              <span class="badge-soon">Em desenvolvimento</span>
+            </div>
+          `;
+        }
+
+        // ===== SHELL / LOGIN TOGGLE =====
+        function enterShell() {
+          loginPage.style.display = 'none';
+          appShell.style.display  = 'flex';
+
+          if (adminUser) {
+            const initial = adminUser.name.charAt(0).toUpperCase();
+            adminName.textContent        = adminUser.name;
+            adminAvatar.textContent      = initial;
+            topbarAdminName.textContent  = adminUser.name;
+            topbarAvatar.textContent     = initial;
+          }
+
+          navigateTo('dashboard');
+        }
+
+        function showLogin() {
+          appShell.style.display  = 'none';
+          loginPage.style.display = 'flex';
+          loginError.style.display = 'none';
+          document.getElementById('email').value    = '';
+          document.getElementById('password').value = '';
+        }
+
+        // ===== INIT =====
+        async function init() {
+          if (!currentToken) { showLogin(); return; }
+
+          try {
+            const res  = await apiFetch('/admin/auth/me');
+            if (!res.ok) throw new Error('unauthorized');
+            const data = await res.json();
+            adminUser  = data.user;
+            enterShell();
+          } catch {
+            currentToken = null;
+            localStorage.removeItem(STORAGE_KEY);
+            showLogin();
+          }
+        }
+
+        // ===== UTILS =====
+        function escapeHtml(str) {
+          return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+        }
+
+        init();
+      })();
+    </script>
+  </body>
+</html>

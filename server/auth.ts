@@ -66,3 +66,27 @@ export function optionalAuth(req: AuthRequest, _res: Response, next: NextFunctio
   }
   next();
 }
+
+export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Token de autenticação necessário" });
+    return;
+  }
+
+  const token = authHeader.slice(7);
+  const payload = verifyToken(token);
+
+  if (!payload) {
+    res.status(401).json({ error: "Token inválido ou expirado" });
+    return;
+  }
+
+  if (payload.role !== "admin") {
+    res.status(403).json({ error: "Acesso restrito a administradores" });
+    return;
+  }
+
+  req.user = payload;
+  next();
+}
