@@ -759,7 +759,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let placeLng: number;
       try {
         const details = await getPlaceDetails(dbUser.linked_place_id);
-        if (!details?.location?.lat || !details?.location?.lng) {
+        if (details?.location?.lat == null || details?.location?.lng == null) {
           res.status(422).json({ error: "Não foi possível obter as coordenadas do seu local. Tente novamente." });
           return;
         }
