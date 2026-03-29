@@ -24,6 +24,7 @@ import {
   getApprovedPlaceIds,
   createPartnerStory,
   getActiveStoriesForPlaces,
+  getStoriesNearby,
   getStoryPhotos,
   getStoryPhotoById,
   getStoryById,
@@ -655,6 +656,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* Partner Stories                                                       */
   /* ------------------------------------------------------------------ */
 
+  app.get("/api/stories/nearby", async (req: AuthRequest, res: Response) => {
+    const lat = parseFloat(req.query.lat as string);
+    const lng = parseFloat(req.query.lng as string);
+    const radius = parseFloat((req.query.radius as string) || "8");
+
+    if (isNaN(lat) || isNaN(lng)) {
+      res.status(400).json({ error: "lat e lng são obrigatórios" });
+      return;
+    }
+
+    try {
+      const stories = await getStoriesNearby(lat, lng, radius);
+      res.json({ stories });
+    } catch (err) {
+      console.error("Get stories nearby error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.get("/api/stories", async (req: AuthRequest, res: Response) => {
     const placeIdsParam = req.query.place_ids as string | undefined;
     if (!placeIdsParam) {
@@ -733,11 +753,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
+      let placeLat: number | undefined;
+      let placeLng: number | undefined;
+      try {
+        const details = await getPlaceDetails(dbUser.linked_place_id);
+        if (details?.location) {
+          placeLat = details.location.lat;
+          placeLng = details.location.lng;
+        }
+      } catch {
+        // Non-fatal: story will be created without coordinates
+      }
+
       const story = await createPartnerStory(
         userId,
         dbUser.linked_place_id,
         dbUser.linked_place_name,
         parsed.data.photos,
+        placeLat,
+        placeLng,
       );
       res.status(201).json({ story });
     } catch (err) {

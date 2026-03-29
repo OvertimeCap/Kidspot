@@ -254,6 +254,15 @@ export async function fetchStories(placeIds: string[]): Promise<StoryItem[]> {
   return data.stories ?? [];
 }
 
+export async function fetchStoriesNearby(lat: number, lng: number, radiusKm = 8): Promise<StoryItem[]> {
+  const res = await apiRequest(
+    "GET",
+    `/api/stories/nearby?lat=${lat}&lng=${lng}&radius=${radiusKm}`,
+  );
+  const data = await res.json();
+  return data.stories ?? [];
+}
+
 export async function fetchStoryPhotos(storyId: string): Promise<StoryPhotoRef[]> {
   const res = await apiRequest("GET", `/api/stories/${encodeURIComponent(storyId)}/photos`);
   const data = await res.json();

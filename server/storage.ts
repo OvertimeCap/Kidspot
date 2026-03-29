@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, inArray, desc, ne, gt } from "drizzle-orm";
+import { eq, and, inArray, desc, ne, gt, sql } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
@@ -376,6 +376,8 @@ export async function createPartnerStory(
   placeId: string,
   placeName: string,
   photoDataList: string[],
+  placeLat?: number,
+  placeLng?: number,
 ): Promise<PartnerStory> {
   if (photoDataList.length === 0) throw new Error("Pelo menos uma foto é obrigatória");
   if (photoDataList.length > 10) throw new Error("Máximo de 10 fotos por story");
@@ -385,7 +387,14 @@ export async function createPartnerStory(
   return db.transaction(async (tx) => {
     const [story] = await tx
       .insert(partnerStories)
-      .values({ user_id: userId, place_id: placeId, place_name: placeName, expires_at: expiresAt })
+      .values({
+        user_id: userId,
+        place_id: placeId,
+        place_name: placeName,
+        place_lat: placeLat != null ? String(placeLat) : null,
+        place_lng: placeLng != null ? String(placeLng) : null,
+        expires_at: expiresAt,
+      })
       .returning();
 
     await tx.insert(storyPhotos).values(
@@ -398,6 +407,71 @@ export async function createPartnerStory(
 
     return story;
   });
+}
+
+export async function getStoriesNearby(
+  lat: number,
+  lng: number,
+  radiusKm = 8,
+): Promise<StoryWithFirstPhoto[]> {
+  const now = new Date();
+
+  const rows = await db
+    .select({
+      id: partnerStories.id,
+      user_id: partnerStories.user_id,
+      place_id: partnerStories.place_id,
+      place_name: partnerStories.place_name,
+      expires_at: partnerStories.expires_at,
+      created_at: partnerStories.created_at,
+      user_role: users.role,
+    })
+    .from(partnerStories)
+    .innerJoin(users, eq(partnerStories.user_id, users.id))
+    .where(
+      and(
+        gt(partnerStories.expires_at, now),
+        sql`${partnerStories.place_lat} IS NOT NULL`,
+        sql`${partnerStories.place_lng} IS NOT NULL`,
+        sql`6371 * acos(LEAST(1.0, cos(radians(${lat})) * cos(radians(${partnerStories.place_lat}::float8)) * cos(radians(${partnerStories.place_lng}::float8) - radians(${lng})) + sin(radians(${lat})) * sin(radians(${partnerStories.place_lat}::float8)))) <= ${radiusKm}`,
+      ),
+    )
+    .orderBy(desc(partnerStories.created_at));
+
+  if (rows.length === 0) return [];
+
+  const storyIds = rows.map((r) => r.id);
+  const firstPhotos = await db
+    .select({
+      story_id: storyPhotos.story_id,
+      id: storyPhotos.id,
+      order: storyPhotos.order,
+    })
+    .from(storyPhotos)
+    .where(inArray(storyPhotos.story_id, storyIds));
+
+  const firstPhotoMap = new Map<string, { id: string; order: number }>();
+  for (const photo of firstPhotos) {
+    const existing = firstPhotoMap.get(photo.story_id);
+    if (existing === undefined || photo.order < existing.order) {
+      firstPhotoMap.set(photo.story_id, { id: photo.id, order: photo.order });
+    }
+  }
+
+  const result: StoryWithFirstPhoto[] = rows.map((r) => ({
+    ...r,
+    user_role: r.user_role,
+    first_photo_id: firstPhotoMap.get(r.id)?.id ?? null,
+  }));
+
+  result.sort((a, b) => {
+    const roleOrder = (role: string) => (role === "parceiro" ? 0 : 1);
+    const diff = roleOrder(a.user_role) - roleOrder(b.user_role);
+    if (diff !== 0) return diff;
+    return b.created_at.getTime() - a.created_at.getTime();
+  });
+
+  return result;
 }
 
 export async function getActiveStoriesForPlaces(

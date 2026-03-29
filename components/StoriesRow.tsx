@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 import {
   fetchStories,
+  fetchStoriesNearby,
   getPhotoUrl,
   type StoryItem,
 } from "@/lib/api";
@@ -82,11 +83,18 @@ export interface PlacePhotoMap {
 }
 
 interface StoriesRowProps {
-  placeIds: string[];
-  placePhotoRefs: PlacePhotoMap;
+  userLat?: number;
+  userLng?: number;
+  placeIds?: string[];
+  placePhotoRefs?: PlacePhotoMap;
 }
 
-export default function StoriesRow({ placeIds, placePhotoRefs }: StoriesRowProps) {
+export default function StoriesRow({
+  userLat,
+  userLng,
+  placeIds = [],
+  placePhotoRefs = {},
+}: StoriesRowProps) {
   const { user } = useAuth();
   const [stories, setStories] = useState<StoryItem[]>([]);
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
@@ -96,16 +104,25 @@ export default function StoriesRow({ placeIds, placePhotoRefs }: StoriesRowProps
     user?.role === "parceiro" || user?.role === "estabelecimento";
   const hasLinkedPlace = !!(user?.linked_place_id);
 
+  const locationKey = userLat != null && userLng != null
+    ? `${userLat.toFixed(4)},${userLng.toFixed(4)}`
+    : null;
   const placeIdsKey = placeIds.join(",");
 
   useEffect(() => {
-    if (placeIds.length === 0) {
+    const hasLocation = userLat != null && userLng != null;
+
+    if (!hasLocation && placeIds.length === 0) {
       setStories([]);
       return;
     }
 
     setLoading(true);
-    Promise.all([fetchStories(placeIds), getSeenStories()])
+    const storiesPromise = hasLocation
+      ? fetchStoriesNearby(userLat!, userLng!)
+      : fetchStories(placeIds);
+
+    Promise.all([storiesPromise, getSeenStories()])
       .then(([fetchedStories, seen]) => {
         setStories(fetchedStories);
         setSeenIds(seen);
@@ -114,7 +131,7 @@ export default function StoriesRow({ placeIds, placePhotoRefs }: StoriesRowProps
         setStories([]);
       })
       .finally(() => setLoading(false));
-  }, [placeIdsKey]);
+  }, [locationKey, placeIdsKey]);
 
   const showAddButton = isPartner && hasLinkedPlace;
 

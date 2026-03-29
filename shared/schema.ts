@@ -123,6 +123,8 @@ export const partnerStories = pgTable("partner_stories", {
     .references(() => users.id),
   place_id: text("place_id").notNull(),
   place_name: text("place_name").notNull(),
+  place_lat: numeric("place_lat"),
+  place_lng: numeric("place_lng"),
   expires_at: timestamp("expires_at").notNull(),
   created_at: timestamp("created_at").defaultNow().notNull(),
 });

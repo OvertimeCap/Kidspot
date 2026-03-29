@@ -133,7 +133,6 @@ export default function HomeScreen() {
   const [locationDenied, setLocationDenied] = useState(false);
   const [searched, setSearched] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("Todos");
-  const [storyPlaceIds, setStoryPlaceIds] = useState<string[]>([]);
   const [placePhotoRefs, setPlacePhotoRefs] = useState<PlacePhotoMap>({});
 
   const didAutoSearch = useRef(false);
@@ -145,10 +144,6 @@ export default function HomeScreen() {
       return place.types.some((t) => PARK_TYPES.has(t));
     return true;
   });
-
-  useEffect(() => {
-    setStoryPlaceIds(filteredResults.map((p) => p.place_id));
-  }, [filteredResults.map((p) => p.place_id).join(",")]);
 
   const doSearch = useCallback(
     async (lat: number, lng: number, label?: string) => {
@@ -205,6 +200,7 @@ export default function HomeScreen() {
         accuracy: Location.Accuracy.Balanced,
       });
       const { latitude, longitude } = loc.coords;
+      setUserLocation({ lat: latitude, lng: longitude });
       await doSearch(latitude, longitude, "Localização atual");
     } catch {
       setError("Não foi possível obter sua localização.");
@@ -248,6 +244,12 @@ export default function HomeScreen() {
           <Ionicons name="happy" size={28} color="#fff" />
         </View>
       </View>
+
+      <StoriesRow
+        userLat={userLocation?.lat}
+        userLng={userLocation?.lng}
+        placePhotoRefs={placePhotoRefs}
+      />
 
       {loading && (
         <View style={styles.centered}>
@@ -305,7 +307,6 @@ export default function HomeScreen() {
           ]}
           ListHeaderComponent={(
             <View>
-              <StoriesRow placeIds={storyPlaceIds} placePhotoRefs={placePhotoRefs} />
               <View style={styles.resultsHeader}>
                 <Text style={styles.resultsCount}>
                   {filteredResults.length > 0
