@@ -659,12 +659,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/stories/nearby", async (req: AuthRequest, res: Response) => {
     const lat = parseFloat(req.query.lat as string);
     const lng = parseFloat(req.query.lng as string);
-    const radius = parseFloat((req.query.radius as string) || "8");
+    const rawRadius = parseFloat((req.query.radius as string) || "8");
 
-    if (isNaN(lat) || isNaN(lng)) {
-      res.status(400).json({ error: "lat e lng são obrigatórios" });
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      res.status(400).json({ error: "lat e lng são obrigatórios e devem ser válidos" });
       return;
     }
+
+    const radius = isFinite(rawRadius) && rawRadius > 0 ? Math.min(rawRadius, 50) : 8;
 
     try {
       const stories = await getStoriesNearby(lat, lng, radius);

@@ -10,6 +10,7 @@ import {
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 import {
@@ -110,27 +111,78 @@ export default function StoriesRow({
   const placeIdsKey = placeIds.join(",");
 
   useEffect(() => {
-    const hasLocation = userLat != null && userLng != null;
+    let cancelled = false;
 
-    if (!hasLocation && placeIds.length === 0) {
-      setStories([]);
-      return;
+    async function load() {
+      const hasPropsLocation = userLat != null && userLng != null;
+
+      if (hasPropsLocation) {
+        setLoading(true);
+        try {
+          const [fetched, seen] = await Promise.all([
+            fetchStoriesNearby(userLat!, userLng!),
+            getSeenStories(),
+          ]);
+          if (!cancelled) {
+            setStories(fetched);
+            setSeenIds(seen);
+          }
+        } catch {
+          if (!cancelled) setStories([]);
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status === "granted") {
+          setLoading(true);
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          if (!cancelled) {
+            const [fetched, seen] = await Promise.all([
+              fetchStoriesNearby(loc.coords.latitude, loc.coords.longitude),
+              getSeenStories(),
+            ]);
+            if (!cancelled) {
+              setStories(fetched);
+              setSeenIds(seen);
+              setLoading(false);
+            }
+          }
+          return;
+        }
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+
+      if (placeIds.length === 0) {
+        if (!cancelled) setStories([]);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const [fetched, seen] = await Promise.all([
+          fetchStories(placeIds),
+          getSeenStories(),
+        ]);
+        if (!cancelled) {
+          setStories(fetched);
+          setSeenIds(seen);
+        }
+      } catch {
+        if (!cancelled) setStories([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
 
-    setLoading(true);
-    const storiesPromise = hasLocation
-      ? fetchStoriesNearby(userLat!, userLng!)
-      : fetchStories(placeIds);
-
-    Promise.all([storiesPromise, getSeenStories()])
-      .then(([fetchedStories, seen]) => {
-        setStories(fetchedStories);
-        setSeenIds(seen);
-      })
-      .catch(() => {
-        setStories([]);
-      })
-      .finally(() => setLoading(false));
+    load();
+    return () => { cancelled = true; };
   }, [locationKey, placeIdsKey]);
 
   const showAddButton = isPartner && hasLinkedPlace;
