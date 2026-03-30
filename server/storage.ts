@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, inArray, desc, ne, gt, sql, gte, lte, like, or } from "drizzle-orm";
+import { eq, and, inArray, desc, ne, gt, lt, sql, gte, lte, like, or } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
@@ -10,6 +10,8 @@ import {
   storyPhotos,
   backofficeUsers,
   auditLog,
+  appFilters,
+  communityFeedback,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -25,6 +27,8 @@ import {
   type BackofficeRole,
   type BackofficeUserStatus,
   type AuditLogEntry,
+  type AppFilter,
+  type CommunityFeedback,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -668,6 +672,19 @@ export async function updateBackofficeUserStatus(
   return updated ?? null;
 }
 
+export async function toggleFilter(id: string): Promise<AppFilter | null> {
+  const filter = await db.query.appFilters.findFirst({
+    where: eq(appFilters.id, id),
+  });
+  if (!filter) return null;
+  const [updated] = await db
+    .update(appFilters)
+    .set({ active: !filter.active, updated_at: new Date() })
+    .where(eq(appFilters.id, id))
+    .returning();
+  return updated ?? null;
+}
+
 export async function updateBackofficeUserLastActive(id: string): Promise<void> {
   await db
     .update(backofficeUsers)
@@ -744,4 +761,142 @@ export async function listAuditLogs(opts: {
   ]);
 
   return { entries, total: countResult[0]?.count ?? 0 };
+export async function archiveExpiredFilters(): Promise<number> {
+  const now = new Date();
+  const result = await db
+    .update(appFilters)
+    .set({ active: false, updated_at: new Date() })
+    .where(
+      and(
+        eq(appFilters.seasonal, true),
+        eq(appFilters.active, true),
+        lt(appFilters.ends_at, now),
+      ),
+    )
+    .returning();
+  return result.length;
+}
+
+/* ------------------------------------------------------------------ */
+/* Community Feedback                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function createFeedback(data: {
+  type: "sugestao" | "denuncia" | "fechado";
+  content: string;
+  place_id?: string;
+  place_name?: string;
+  user_id?: string;
+}): Promise<CommunityFeedback> {
+  const [row] = await db
+    .insert(communityFeedback)
+    .values({
+      type: data.type,
+      content: data.content,
+      place_id: data.place_id ?? null,
+      place_name: data.place_name ?? null,
+      user_id: data.user_id ?? null,
+    })
+    .returning();
+  return row;
+}
+
+export async function listFeedback(opts?: {
+  type?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<(CommunityFeedback & { user_name: string | null; user_email: string | null })[]> {
+  const conditions: ReturnType<typeof eq>[] = [];
+  if (opts?.type) conditions.push(eq(communityFeedback.type, opts.type as "sugestao" | "denuncia" | "fechado"));
+  if (opts?.status) conditions.push(eq(communityFeedback.status, opts.status as "pendente" | "resolvido" | "rejeitado"));
+
+  const rows = await db
+    .select({
+      id: communityFeedback.id,
+      type: communityFeedback.type,
+      content: communityFeedback.content,
+      place_id: communityFeedback.place_id,
+      place_name: communityFeedback.place_name,
+      user_id: communityFeedback.user_id,
+      status: communityFeedback.status,
+      created_at: communityFeedback.created_at,
+      resolved_at: communityFeedback.resolved_at,
+      resolved_by: communityFeedback.resolved_by,
+      user_name: users.name,
+      user_email: users.email,
+    })
+    .from(communityFeedback)
+    .leftJoin(users, eq(communityFeedback.user_id, users.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(communityFeedback.created_at))
+    .limit(opts?.limit ?? 100)
+    .offset(opts?.offset ?? 0);
+
+  return rows;
+}
+
+export async function countUnreadFeedback(): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(communityFeedback)
+    .where(eq(communityFeedback.status, "pendente"));
+  return Number(row?.count ?? 0);
+}
+
+export async function resolveFeedback(
+  id: string,
+  resolvedById: string,
+): Promise<CommunityFeedback | null> {
+  const [updated] = await db
+    .update(communityFeedback)
+    .set({ status: "resolvido", resolved_at: new Date(), resolved_by: resolvedById })
+    .where(eq(communityFeedback.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function rejectFeedback(
+  id: string,
+  resolvedById: string,
+): Promise<CommunityFeedback | null> {
+  const [updated] = await db
+    .update(communityFeedback)
+    .set({ status: "rejeitado", resolved_at: new Date(), resolved_by: resolvedById })
+    .where(eq(communityFeedback.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function addFeedbackToQueue(
+  id: string,
+  resolvedById: string,
+): Promise<{ feedback: CommunityFeedback; place_id: string } | null> {
+  const feedback = await db.query.communityFeedback.findFirst({
+    where: eq(communityFeedback.id, id),
+  });
+  if (!feedback) return null;
+
+  const [updated] = await db
+    .update(communityFeedback)
+    .set({ status: "resolvido", resolved_at: new Date(), resolved_by: resolvedById })
+    .where(eq(communityFeedback.id, id))
+    .returning();
+
+  const placeId = feedback.place_id ?? `feedback_${id}`;
+
+  if (feedback.place_id) {
+    await db
+      .insert(placesKidspot)
+      .values({
+        place_id: feedback.place_id,
+        city: "Pendente",
+        lat: "0",
+        lng: "0",
+        tags: { status: "pendente", source: "feedback", feedback_id: id },
+      })
+      .onConflictDoNothing();
+  }
+
+  return { feedback: updated, place_id: placeId };
 }

@@ -379,6 +379,26 @@ export default function PerfilScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
           </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-filtros" as never)}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="options-outline" size={22} color="#7c3aed" />
+              <Text style={styles.adminCardText}>Controle de filtros</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-feedback" as never)}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="chatbox-ellipses-outline" size={22} color="#ea580c" />
+              <Text style={styles.adminCardText}>Caixa de entrada</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
         </View>
       )}
 

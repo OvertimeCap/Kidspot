@@ -41,8 +41,20 @@ import {
   verifyBackofficePassword,
   createAuditLog,
   listAuditLogs,
+  listFilters,
+  getActiveFilters,
+  createFilter,
+  updateFilter,
+  toggleFilter,
+  archiveExpiredFilters,
+  createFeedback,
+  listFeedback,
+  countUnreadFeedback,
+  resolveFeedback,
+  rejectFeedback,
+  addFeedbackToQueue,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, type UserRole, type BackofficeRole } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, type UserRole, type BackofficeRole } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
 import crypto from "crypto";
@@ -968,6 +980,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/backoffice/auth/login", async (req: AuthRequest, res: Response) => {
     const parsed = backofficeLoginSchema.safeParse(req.body);
+  /* App Filters — public                                                 */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/filters/active", async (_req: AuthRequest, res: Response) => {
+    try {
+      await archiveExpiredFilters();
+      const filters = await getActiveFilters();
+      res.json({ filters });
+    } catch (err) {
+      console.error("Get active filters error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* App Filters — admin                                                  */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/filters", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    try {
+      await archiveExpiredFilters();
+      const filters = await listFilters();
+      res.json({ filters });
+    } catch (err) {
+      console.error("List filters error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/api/admin/filters", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const parsed = insertFilterSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
@@ -1028,6 +1081,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (err) {
       console.error("Backoffice login error:", err);
+    try {
+      const filter = await createFilter(parsed.data);
+      res.status(201).json({ filter });
+    } catch (err) {
+      console.error("Create filter error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -1086,6 +1144,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/backoffice/auth/activate", async (req: AuthRequest, res: Response) => {
     const parsed = activateAccountSchema.safeParse(req.body);
+  app.patch("/api/admin/filters/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const filterId = req.params.id as string;
+    const parsed = insertFilterSchema.partial().safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
@@ -1136,6 +1202,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (err) {
       console.error("Backoffice activate error:", err);
+    try {
+      const filter = await updateFilter(filterId, parsed.data);
+      if (!filter) {
+        res.status(404).json({ error: "Filtro não encontrado" });
+        return;
+      }
+      res.json({ filter });
+    } catch (err) {
+      console.error("Update filter error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/api/admin/filters/:id/toggle", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const filterId = req.params.id as string;
+    try {
+      const filter = await toggleFilter(filterId);
+      if (!filter) {
+        res.status(404).json({ error: "Filtro não encontrado" });
+        return;
+      }
+      res.json({ filter });
+    } catch (err) {
+      console.error("Toggle filter error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -1498,6 +1593,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
 
     res.json({ role, permissions });
+  /* Community Feedback — public                                          */
+  /* ------------------------------------------------------------------ */
+
+  app.post("/api/feedback", async (req: AuthRequest, res: Response) => {
+    const parsed = insertFeedbackSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const userId = req.user?.userId;
+      const feedback = await createFeedback({ ...parsed.data, user_id: userId });
+      res.status(201).json({ feedback });
+    } catch (err) {
+      console.error("Create feedback error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Community Feedback — admin                                           */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/feedback", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const type = req.query.type as string | undefined;
+    const status = req.query.status as string | undefined;
+    const VALID_TYPES = new Set(["sugestao", "denuncia", "fechado"]);
+    const VALID_STATUSES = new Set(["pendente", "resolvido", "rejeitado"]);
+    if (type && !VALID_TYPES.has(type)) {
+      res.status(400).json({ error: "type inválido" });
+      return;
+    }
+    if (status && !VALID_STATUSES.has(status)) {
+      res.status(400).json({ error: "status inválido" });
+      return;
+    }
+    try {
+      const items = await listFeedback({ type, status });
+      const unreadCount = await countUnreadFeedback();
+      res.json({ feedback: items, unreadCount });
+    } catch (err) {
+      console.error("List feedback error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/admin/feedback/unread-count", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    try {
+      const count = await countUnreadFeedback();
+      res.json({ count });
+    } catch (err) {
+      console.error("Feedback unread count error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const feedbackActionSchema = z.object({
+    action: z.enum(["resolver", "rejeitar", "adicionar_fila"]),
+  });
+
+  app.patch("/api/admin/feedback/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const parsed = feedbackActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const feedbackId = req.params.id as string;
+    try {
+      if (parsed.data.action === "resolver") {
+        const feedback = await resolveFeedback(feedbackId, caller.id);
+        if (!feedback) {
+          res.status(404).json({ error: "Feedback não encontrado" });
+          return;
+        }
+        res.json({ feedback });
+      } else if (parsed.data.action === "rejeitar") {
+        const feedback = await rejectFeedback(feedbackId, caller.id);
+        if (!feedback) {
+          res.status(404).json({ error: "Feedback não encontrado" });
+          return;
+        }
+        res.json({ feedback });
+      } else {
+        const result = await addFeedbackToQueue(feedbackId, caller.id);
+        if (!result) {
+          res.status(404).json({ error: "Feedback não encontrado" });
+          return;
+        }
+        res.json({ feedback: result.feedback, queued_place_id: result.place_id });
+      }
+    } catch (err) {
+      console.error("Feedback action error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   const httpServer = createServer(app);

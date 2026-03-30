@@ -235,6 +235,29 @@ The backoffice has its own separate authentication system with 4 roles:
 - Super Admins see: Collaborators list + Audit Log tabs
 - Non-super-admins see: Permission matrix for their role
 
+## Admin Modules
+
+### Module 2 — App Filter Control (`/admin-filtros`)
+Accessible from the admin section in the Profile tab for users with `admin` or `colaborador` roles.
+- Lists all filters as cards with toggle switches (on/off)
+- Create new seasonal or permanent filters with name, icon, start/end dates
+- Expired seasonal filters auto-archive on fetch
+- Public endpoint: `GET /api/filters/active` — returns currently active non-expired filters
+
+Database table: `app_filters` (id, name, icon, active, seasonal, starts_at, ends_at, criteria, created_at, updated_at)
+
+### Module 8 — Community Feedback Inbox (`/admin-feedback`)
+Accessible from the admin section in the Profile tab for users with `admin` or `colaborador` roles.
+- Lists all user feedback organized by type tabs: Todos / Sugestões / Denúncias / Fechados
+- Displays unread count badge in header
+- Actions per feedback: "Adicionar à fila" (creates pending place for curation), "Marcar como resolvido", "Rejeitar"
+- Public endpoint: `POST /api/feedback` — app users can submit feedback without authentication
+
+Database table: `community_feedback` (id, type, content, place_id, place_name, user_id, status, created_at, resolved_at, resolved_by)
+
+Feedback types: `sugestao`, `denuncia`, `fechado`
+Feedback statuses: `pendente`, `resolvido`, `rejeitado`
+
 ## Environment variables
 
 | Variable | Required | Description |

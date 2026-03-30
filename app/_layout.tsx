@@ -69,6 +69,18 @@ function RootLayoutNav() {
           presentation: "modal",
         }}
       />
+      <Stack.Screen
+        name="admin-filtros"
+        options={{
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="admin-feedback"
+        options={{
+          headerShown: false,
+        }}
+      />
     </Stack>
   );
 }

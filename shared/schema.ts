@@ -41,6 +41,18 @@ export const claimStatusEnum = pgEnum("claim_status", [
   "denied",
 ]);
 
+export const feedbackTypeEnum = pgEnum("feedback_type", [
+  "sugestao",
+  "denuncia",
+  "fechado",
+]);
+
+export const feedbackStatusEnum = pgEnum("feedback_status", [
+  "pendente",
+  "resolvido",
+  "rejeitado",
+]);
+
 export const users = pgTable("users", {
   id: varchar("id")
     .primaryKey()
@@ -154,6 +166,36 @@ export const storyPhotos = pgTable("story_photos", {
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const appFilters = pgTable("app_filters", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  icon: text("icon").notNull().default("filter"),
+  active: boolean("active").notNull().default(true),
+  seasonal: boolean("seasonal").notNull().default(false),
+  starts_at: timestamp("starts_at"),
+  ends_at: timestamp("ends_at"),
+  criteria: jsonb("criteria"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const communityFeedback = pgTable("community_feedback", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  type: feedbackTypeEnum("type").notNull(),
+  content: text("content").notNull(),
+  place_id: text("place_id"),
+  place_name: text("place_name"),
+  user_id: varchar("user_id").references(() => users.id),
+  status: feedbackStatusEnum("status").notNull().default("pendente"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  resolved_at: timestamp("resolved_at"),
+  resolved_by: varchar("resolved_by").references(() => users.id),
+});
+
 export const insertPlaceSchema = createInsertSchema(placesKidspot).omit({
   created_at: true,
 });
@@ -249,3 +291,25 @@ export type BackofficeUser = typeof backofficeUsers.$inferSelect;
 export type BackofficeRole = "super_admin" | "admin" | "curador" | "analista";
 export type BackofficeUserStatus = "ativo" | "pendente" | "inativo";
 export type AuditLogEntry = typeof auditLog.$inferSelect;
+
+export type AppFilter = typeof appFilters.$inferSelect;
+export type InsertAppFilter = typeof appFilters.$inferInsert;
+
+export type CommunityFeedback = typeof communityFeedback.$inferSelect;
+
+export const insertFeedbackSchema = z.object({
+  type: z.enum(["sugestao", "denuncia", "fechado"]),
+  content: z.string().min(1).max(2000),
+  place_id: z.string().optional(),
+  place_name: z.string().optional(),
+});
+
+export const insertFilterSchema = z.object({
+  name: z.string().min(1).max(100),
+  icon: z.string().min(1).max(50),
+  active: z.boolean().optional(),
+  seasonal: z.boolean().optional(),
+  starts_at: z.string().datetime().optional().nullable(),
+  ends_at: z.string().datetime().optional().nullable(),
+  criteria: z.record(z.unknown()).optional().nullable(),
+});
