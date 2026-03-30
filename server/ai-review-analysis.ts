@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { db } from "./db";
-import { enrichmentCache } from "@shared/schema";
+import { enrichmentCache, aiPrompts } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 
 const CACHE_TTL_DAYS = 7;
@@ -21,7 +21,7 @@ export type AIFamilyAnalysis = {
   confidence: "high" | "medium" | "low";
 };
 
-const SYSTEM_PROMPT = `Você é um assistente especializado em avaliar se um estabelecimento é adequado para famílias com crianças pequenas (0-10 anos).
+const FALLBACK_SYSTEM_PROMPT = `Você é um assistente especializado em avaliar se um estabelecimento é adequado para famílias com crianças pequenas (0-10 anos).
 
 Analise os textos de reviews fornecidos e identifique sinais de que o lugar é family-friendly.
 
@@ -46,6 +46,38 @@ Responda APENAS com um JSON válido neste formato:
 - family_score: 0 = nenhuma evidência familiar, 100 = excelente para famílias
 - Se não houver nenhuma menção a crianças/família, retorne score 0 e lista vazia
 - confidence: high = múltiplas menções claras, medium = algumas menções, low = indícios vagos`;
+
+let cachedPrompt: string | null = null;
+let promptCacheTime = 0;
+const PROMPT_CACHE_TTL_MS = 60_000;
+
+async function getActiveSystemPrompt(): Promise<string> {
+  const now = Date.now();
+  if (cachedPrompt && now - promptCacheTime < PROMPT_CACHE_TTL_MS) {
+    return cachedPrompt;
+  }
+
+  try {
+    const active = await db.query.aiPrompts.findFirst({
+      where: eq(aiPrompts.is_active, true),
+      orderBy: (t, { desc }) => [desc(t.updated_at)],
+    });
+    if (active?.prompt) {
+      cachedPrompt = active.prompt;
+      promptCacheTime = now;
+      return cachedPrompt;
+    }
+  } catch (err) {
+    console.warn("[AI] failed to load prompt from DB, using fallback:", err);
+  }
+
+  return FALLBACK_SYSTEM_PROMPT;
+}
+
+export function invalidatePromptCache(): void {
+  cachedPrompt = null;
+  promptCacheTime = 0;
+}
 
 const NEGATIVE_SENTINEL: AIFamilyAnalysis = { family_score: -1, highlights: [], confidence: "low" };
 
@@ -105,6 +137,8 @@ async function fetchAndCacheAIAnalysis(
 
   if (activeRequests >= MAX_CONCURRENT_AI) return null;
 
+  const systemPrompt = await getActiveSystemPrompt();
+
   const combinedReviews = reviewTexts
     .slice(0, 5)
     .map((r, i) => `Review ${i + 1}: ${r}`)
@@ -118,7 +152,7 @@ async function fetchAndCacheAIAnalysis(
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         {
           role: "user",
           content: `Estabelecimento: "${placeName}"\n\nReviews:\n${combinedReviews}`,

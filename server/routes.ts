@@ -1,7 +1,7 @@
 import type { Express, Response, NextFunction } from "express";
 import { createServer, type Server } from "node:http";
 import { z } from "zod";
-import { pool } from "./db";
+import { pool, db } from "./db";
 import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace } from "./google-places";
 import { sendInviteEmail } from "./email";
 import {
@@ -54,9 +54,11 @@ import {
   rejectFeedback,
   addFeedbackToQueue,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, type UserRole, type BackofficeRole } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
+import { invalidatePromptCache } from "./ai-review-analysis";
+import { eq, desc } from "drizzle-orm";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 
@@ -980,6 +982,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/backoffice/auth/login", async (req: AuthRequest, res: Response) => {
     const parsed = backofficeLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const { email, password } = parsed.data;
+
+    try {
+      const user = await findBackofficeUserByEmail(email);
+      if (!user) {
+        res.status(401).json({ error: "Credenciais inválidas" });
+        return;
+      }
+
+      if (user.status !== "ativo") {
+        res.status(401).json({ error: "Conta não ativa. Verifique seu e-mail de convite." });
+        return;
+      }
+
+      if (!user.password_hash) {
+        res.status(401).json({ error: "Conta não ativada. Por favor, ative sua conta pelo link no e-mail de convite." });
+        return;
+      }
+
+      const validPassword = await bcrypt.compare(password, user.password_hash);
+      if (!validPassword) {
+        res.status(401).json({ error: "Credenciais inválidas" });
+        return;
+      }
+
+      await createAuditLog({
+        userId: user.id,
+        userEmail: user.email,
+        userRole: user.role,
+        action: "login",
+        module: "auth",
+        ip: req.ip,
+      });
+
+      await updateBackofficeUserLastActive(user.id);
+
+      const token = signBackofficeToken({
+        backofficeUserId: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          status: user.status,
+        },
+      });
+    } catch (err) {
+      console.error("Backoffice login error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
   /* App Filters — public                                                 */
   /* ------------------------------------------------------------------ */
 
@@ -1026,66 +1093,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
 
-    const { email, password } = parsed.data;
-
-    try {
-      const user = await findBackofficeUserByEmail(email.toLowerCase());
-      if (!user) {
-        res.status(401).json({ error: "E-mail ou senha incorretos" });
-        return;
-      }
-
-      if (user.status === "inativo") {
-        res.status(403).json({ error: "Conta desativada. Entre em contato com o administrador." });
-        return;
-      }
-
-      if (user.status === "pendente" || !user.password_hash) {
-        res.status(403).json({ error: "Conta ainda não ativada. Verifique seu e-mail de convite." });
-        return;
-      }
-
-      const valid = await verifyBackofficePassword(password, user.password_hash);
-      if (!valid) {
-        res.status(401).json({ error: "E-mail ou senha incorretos" });
-        return;
-      }
-
-      await updateBackofficeUserLastActive(user.id);
-
-      const token = signBackofficeToken({
-        backofficeUserId: user.id,
-        email: user.email,
-        role: user.role,
-        name: user.name,
-      });
-
-      await createAuditLog({
-        userId: user.id,
-        userEmail: user.email,
-        userRole: user.role,
-        action: "login",
-        module: "auth",
-        ip: req.ip,
-      });
-
-      res.json({
-        token,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          status: user.status,
-        },
-      });
-    } catch (err) {
-      console.error("Backoffice login error:", err);
     try {
       const filter = await createFilter(parsed.data);
       res.status(201).json({ filter });
     } catch (err) {
       console.error("Create filter error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* Admin — AI Prompts (Módulo 1)                                       */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/ai-prompts", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    try {
+      const rows = await db.select().from(aiPrompts).orderBy(desc(aiPrompts.updated_at));
+      res.json({ prompts: rows });
+    } catch (err) {
+      console.error("List prompts error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/admin/ai-prompts/active", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    try {
+      const active = await db.query.aiPrompts.findFirst({
+        where: eq(aiPrompts.is_active, true),
+        orderBy: (t, { desc }) => [desc(t.updated_at)],
+      });
+      res.json({ prompt: active ?? null });
+    } catch (err) {
+      console.error("Get active prompt error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const upsertPromptSchema = z.object({
+    prompt: z.string().min(10, "Prompt muito curto"),
+  });
+
+  app.put("/api/admin/ai-prompts/active", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Apenas administradores podem editar prompts" });
+      return;
+    }
+    const parsed = upsertPromptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const existing = await db.query.aiPrompts.findFirst({
+        where: eq(aiPrompts.is_active, true),
+        orderBy: (t, { desc }) => [desc(t.updated_at)],
+      });
+      if (existing) {
+        const [updated] = await db
+          .update(aiPrompts)
+          .set({ prompt: parsed.data.prompt, updated_at: new Date(), created_by: caller.id })
+          .where(eq(aiPrompts.id, existing.id))
+          .returning();
+        invalidatePromptCache();
+        res.json({ prompt: updated });
+      } else {
+        const [created] = await db
+          .insert(aiPrompts)
+          .values({ name: "default", prompt: parsed.data.prompt, is_active: true, created_by: caller.id })
+          .returning();
+        invalidatePromptCache();
+        res.status(201).json({ prompt: created });
+      }
+    } catch (err) {
+      console.error("Upsert prompt error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const testPromptSchema = z.object({
+    prompt: z.string().min(10),
+    placeName: z.string().min(1),
+    reviews: z.array(z.string()).min(1).max(5),
+  });
+
+  app.post("/api/admin/ai-prompts/test", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const parsed = testPromptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      res.status(422).json({ error: "OPENAI_API_KEY não configurada no servidor" });
+      return;
+    }
+
+    try {
+      const { default: OpenAI } = await import("openai");
+      const openai = new OpenAI({ apiKey });
+
+      const combinedReviews = parsed.data.reviews
+        .map((r, i) => `Review ${i + 1}: ${r}`)
+        .join("\n\n");
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: parsed.data.prompt },
+          {
+            role: "user",
+            content: `Estabelecimento: "${parsed.data.placeName}"\n\nReviews:\n${combinedReviews}`,
+          },
+        ],
+        temperature: 0.1,
+        max_tokens: 300,
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        res.status(500).json({ error: "IA não retornou resposta" });
+        return;
+      }
+      const result = JSON.parse(content);
+      res.json({ result });
+    } catch (err) {
+      console.error("Test prompt error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -1115,6 +1264,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /* ------------------------------------------------------------------ */
+  /* Admin — KidScore Rules (Módulo 3)                                   */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/kidscore-rules", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    try {
+      const rows = await db.select().from(kidscoreRules).orderBy(kidscoreRules.label);
+      res.json({ rules: rows });
+    } catch (err) {
+      console.error("List kidscore rules error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
   const activateAccountSchema = z.object({
     token: z.string().min(1),
     password: z.string().min(8),
@@ -1144,14 +1311,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/backoffice/auth/activate", async (req: AuthRequest, res: Response) => {
     const parsed = activateAccountSchema.safeParse(req.body);
-  app.patch("/api/admin/filters/:id", requireAuth, async (req: AuthRequest, res: Response) => {
-    const caller = await getUserById(req.user!.userId);
-    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
-      res.status(403).json({ error: "Acesso negado" });
-      return;
-    }
-    const filterId = req.params.id as string;
-    const parsed = insertFilterSchema.partial().safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
@@ -1202,6 +1361,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (err) {
       console.error("Backoffice activate error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/api/admin/filters/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const filterId = req.params.id as string;
+    const parsed = insertFilterSchema.partial().safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
     try {
       const filter = await updateFilter(filterId, parsed.data);
       if (!filter) {
@@ -1211,6 +1386,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ filter });
     } catch (err) {
       console.error("Update filter error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const updateRuleSchema = z.object({
+    weight: z.number().int().min(0).max(1000).optional(),
+    is_active: z.boolean().optional(),
+    label: z.string().min(1).optional(),
+  });
+
+  app.patch("/api/admin/kidscore-rules/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Apenas administradores podem editar regras de ranqueamento" });
+      return;
+    }
+    const parsed = updateRuleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const [updated] = await db
+        .update(kidscoreRules)
+        .set({ ...parsed.data, updated_at: new Date() })
+        .where(eq(kidscoreRules.id, req.params.id as string))
+        .returning();
+      if (!updated) {
+        res.status(404).json({ error: "Regra não encontrada" });
+        return;
+      }
+      res.json({ rule: updated });
+    } catch (err) {
+      console.error("Update kidscore rule error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -1231,6 +1440,151 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ filter });
     } catch (err) {
       console.error("Toggle filter error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const bulkUpdateRulesSchema = z.object({
+    rules: z.array(z.object({
+      id: z.string(),
+      weight: z.number().int().min(0).max(1000),
+      is_active: z.boolean(),
+    })),
+  });
+
+  app.put("/api/admin/kidscore-rules", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Apenas administradores podem editar regras de ranqueamento" });
+      return;
+    }
+    const parsed = bulkUpdateRulesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const updated = [];
+      for (const rule of parsed.data.rules) {
+        const [row] = await db
+          .update(kidscoreRules)
+          .set({ weight: rule.weight, is_active: rule.is_active, updated_at: new Date() })
+          .where(eq(kidscoreRules.id, rule.id))
+          .returning();
+        if (row) updated.push(row);
+      }
+      res.json({ rules: updated });
+    } catch (err) {
+      console.error("Bulk update kidscore rules error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Custom Criteria (Módulo 4)                                  */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/custom-criteria", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    try {
+      const rows = await db.select().from(customCriteria).orderBy(customCriteria.created_at);
+      res.json({ criteria: rows });
+    } catch (err) {
+      console.error("List custom criteria error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const createCriterionSchema = z.object({
+    key: z.string().min(1).regex(/^[a-z_]+$/, "Chave deve conter apenas letras minúsculas e underscores"),
+    label: z.string().min(1),
+    field_type: z.enum(["boolean", "number", "text"]).default("boolean"),
+    show_in_filter: z.boolean().default(true),
+  });
+
+  app.post("/api/admin/custom-criteria", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Apenas administradores podem criar critérios" });
+      return;
+    }
+    const parsed = createCriterionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const [created] = await db
+        .insert(customCriteria)
+        .values({ ...parsed.data, is_active: true })
+        .returning();
+      res.status(201).json({ criterion: created });
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("unique")) {
+        res.status(409).json({ error: "Já existe um critério com essa chave" });
+        return;
+      }
+      console.error("Create custom criterion error:", err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  app.delete("/api/admin/custom-criteria/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Apenas administradores podem excluir critérios" });
+      return;
+    }
+    try {
+      const [deleted] = await db
+        .delete(customCriteria)
+        .where(eq(customCriteria.id, req.params.id as string))
+        .returning();
+      if (!deleted) {
+        res.status(404).json({ error: "Critério não encontrado" });
+        return;
+      }
+      res.json({ deleted: true });
+    } catch (err) {
+      console.error("Delete custom criterion error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/api/admin/custom-criteria/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Apenas administradores podem editar critérios" });
+      return;
+    }
+    const patchSchema = z.object({
+      is_active: z.boolean().optional(),
+      show_in_filter: z.boolean().optional(),
+      label: z.string().min(1).optional(),
+    });
+    const parsed = patchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const [updated] = await db
+        .update(customCriteria)
+        .set(parsed.data)
+        .where(eq(customCriteria.id, req.params.id as string))
+        .returning();
+      if (!updated) {
+        res.status(404).json({ error: "Critério não encontrado" });
+        return;
+      }
+      res.json({ criterion: updated });
+    } catch (err) {
+      console.error("Patch custom criterion error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -1514,59 +1868,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   /* ------------------------------------------------------------------ */
   /* Backoffice — Operational module routes (RBAC enforced)              */
-  /* Permission matrix (from product spec):                              */
-  /*   super_admin: all modules full                                     */
-  /*   admin: all except provedores_ia & gestao_usuarios                 */
-  /*   curador: curadoria/galeria/operacao-ia(search)/comunidade write;  */
-  /*            parcerias/prompts/filtros/kidscore/cidades read          */
-  /*   analista: read-only on most modules                               */
   /* ------------------------------------------------------------------ */
 
-  /* Modules 1–12: read-only discovery endpoints (RBAC enforced per permission matrix).
-   * Write operations for each module will be added incrementally as each module is built.
-   * These GET routes establish correct role enforcement and activity tracking. */
-
-  /* 1. Gestão de Prompts — full: super_admin/admin; read: analista */
   app.get("/api/backoffice/prompts", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "gestao_prompts", items: [] }));
 
-  /* 2. Filtros do App — full: super_admin/admin; read: analista */
   app.get("/api/backoffice/filtros", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "filtros_app", items: [] }));
 
-  /* 3. KidScore — full: super_admin/admin; read: analista */
   app.get("/api/backoffice/kidscore", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "kidscore", config: {} }));
 
-  /* 4. Critérios Customizados — full: super_admin/admin only */
   app.get("/api/backoffice/criterios", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "criterios_customizados", items: [] }));
 
-  /* 5. Fila de Curadoria — full: super_admin/admin/curador; read: analista */
   app.get("/api/backoffice/curadoria", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "fila_curadoria", items: [] }));
 
-  /* 6. Galeria de Fotos — super_admin/admin/curador */
   app.get("/api/backoffice/galeria", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "galeria", items: [] }));
 
-  /* 7. Operação de IA — read: all; full write: super_admin/admin */
   app.get("/api/backoffice/operacao-ia", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "operacao_ia", stats: {} }));
 
-  /* 8. Comunidade — full: super_admin/admin/curador; read: analista */
   app.get("/api/backoffice/comunidade", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "comunidade", items: [] }));
 
-  /* 9. Gestão de Cidades — full: super_admin/admin; read: analista */
   app.get("/api/backoffice/cidades", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "gestao_cidades", items: [] }));
 
-  /* 10. Provedores de IA — super_admin only */
   app.get("/api/backoffice/provedores-ia", requireBackofficeAuth, requireRole("super_admin"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "provedores_ia", providers: [] }));
 
-  /* 12. Parcerias — full: super_admin/admin; read: curador/analista */
   app.get("/api/backoffice/parcerias", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
     (_req: AuthRequest, res: Response) => res.json({ module: "parcerias", items: [] }));
 
@@ -1593,7 +1926,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
 
     res.json({ role, permissions });
-  /* Community Feedback — public                                          */
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Community Feedback — public                                         */
   /* ------------------------------------------------------------------ */
 
   app.post("/api/feedback", async (req: AuthRequest, res: Response) => {

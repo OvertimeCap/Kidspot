@@ -181,6 +181,18 @@ export const appFilters = pgTable("app_filters", {
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const aiPrompts = pgTable("ai_prompts", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  name: text("name").notNull().default("default"),
+  prompt: text("prompt").notNull(),
+  is_active: boolean("is_active").notNull().default(true),
+  created_by: varchar("created_by").references(() => users.id),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const communityFeedback = pgTable("community_feedback", {
   id: varchar("id")
     .primaryKey()
@@ -194,6 +206,30 @@ export const communityFeedback = pgTable("community_feedback", {
   created_at: timestamp("created_at").defaultNow().notNull(),
   resolved_at: timestamp("resolved_at"),
   resolved_by: varchar("resolved_by").references(() => users.id),
+});
+
+export const kidscoreRules = pgTable("kidscore_rules", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  key: text("key").notNull().unique(),
+  label: text("label").notNull(),
+  weight: integer("weight").notNull().default(0),
+  is_active: boolean("is_active").notNull().default(true),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const customCriteria = pgTable("custom_criteria", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  key: text("key").notNull().unique(),
+  label: text("label").notNull(),
+  field_type: text("field_type").notNull().default("boolean"),
+  show_in_filter: boolean("show_in_filter").notNull().default(true),
+  is_active: boolean("is_active").notNull().default(true),
+  created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const insertPlaceSchema = createInsertSchema(placesKidspot).omit({
@@ -313,3 +349,7 @@ export const insertFilterSchema = z.object({
   ends_at: z.string().datetime().optional().nullable(),
   criteria: z.record(z.unknown()).optional().nullable(),
 });
+
+export type AiPrompt = typeof aiPrompts.$inferSelect;
+export type KidscoreRule = typeof kidscoreRules.$inferSelect;
+export type CustomCriterion = typeof customCriteria.$inferSelect;

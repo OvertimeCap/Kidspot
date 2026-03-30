@@ -2,6 +2,7 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { registerRoutes } from "./routes";
+import { seedConfigDefaults } from "./config-defaults";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -302,6 +303,8 @@ function setupErrorHandler(app: express.Application) {
 
   serveAdminPanel(app);
   configureExpoAndLanding(app);
+
+  await seedConfigDefaults();
 
   const server = await registerRoutes(app);
 

@@ -761,6 +761,8 @@ export async function listAuditLogs(opts: {
   ]);
 
   return { entries, total: countResult[0]?.count ?? 0 };
+}
+
 export async function archiveExpiredFilters(): Promise<number> {
   const now = new Date();
   const result = await db

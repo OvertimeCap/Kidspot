@@ -81,6 +81,22 @@ function RootLayoutNav() {
           headerShown: false,
         }}
       />
+      <Stack.Screen
+        name="admin-usuarios"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="admin-prompts"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="admin-kidscore"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="admin-criterios"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }

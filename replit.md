@@ -258,6 +258,53 @@ Database table: `community_feedback` (id, type, content, place_id, place_name, u
 Feedback types: `sugestao`, `denuncia`, `fechado`
 Feedback statuses: `pendente`, `resolvido`, `rejeitado`
 
+## Admin Backoffice Modules
+
+Admin and colaborador users see additional links in the Profile tab under "Administração":
+
+### Módulo 1 — Gestão de Prompts IA (`/admin-prompts`)
+- Displays and edits the active OpenAI system prompt used for review analysis
+- Prompt is stored in `ai_prompts` table; server caches it for 60s with `invalidatePromptCache()` on save
+- Test panel: send example place name + reviews and see real-time AI response before saving
+- Only `admin` role can save. `colaborador` can view and test.
+
+### Módulo 3 — Motor de Ranqueamento (`/admin-kidscore`)
+- Shows all KidScore scoring rules (name, weight, active/inactive) from `kidscore_rules` table
+- Inline editable weight fields + Switch toggles for each rule
+- Dirty-state tracking with banner + Salvar / Descartar buttons (bulk update via PUT)
+- Only `admin` can edit. `colaborador` can view.
+
+### Módulo 4 — Critérios Customizados (`/admin-criterios`)
+- Lists custom field criteria from `custom_criteria` table
+- Create form: key (slug), label, field_type (boolean/number/text), show_in_filter flag
+- Toggle per-criterion: active status and filter visibility
+- Delete with confirmation alert
+
+### New DB tables
+| Table | Purpose |
+|-------|---------|
+| `ai_prompts` | System prompt versioning for OpenAI review analysis |
+| `kidscore_rules` | Configurable scoring weights per criterion |
+| `custom_criteria` | Dynamic evaluation fields (Espaço Kids, Fraldário, etc.) |
+
+All tables are seeded on first startup via `server/config-defaults.ts`.
+
+### New API Routes (admin/colaborador required)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | /api/admin/ai-prompts | admin/colab | List all prompts |
+| GET | /api/admin/ai-prompts/active | admin/colab | Get active prompt |
+| PUT | /api/admin/ai-prompts/active | admin only | Save/update active prompt |
+| POST | /api/admin/ai-prompts/test | admin/colab | Test prompt with example data |
+| GET | /api/admin/kidscore-rules | admin/colab | List all scoring rules |
+| PUT | /api/admin/kidscore-rules | admin only | Bulk update rules |
+| PATCH | /api/admin/kidscore-rules/:id | admin only | Update single rule |
+| GET | /api/admin/custom-criteria | admin/colab | List custom criteria |
+| POST | /api/admin/custom-criteria | admin only | Create new criterion |
+| PATCH | /api/admin/custom-criteria/:id | admin only | Update criterion |
+| DELETE | /api/admin/custom-criteria/:id | admin only | Delete criterion |
+
 ## Environment variables
 
 | Variable | Required | Description |

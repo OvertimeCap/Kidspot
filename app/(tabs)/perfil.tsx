@@ -391,11 +391,41 @@ export default function PerfilScreen() {
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-prompts" as any)}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="sparkles-outline" size={22} color="#7C3AED" />
+              <Text style={styles.adminCardText}>Prompts de IA</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
             onPress={() => router.push("/admin-feedback" as never)}
           >
             <View style={styles.adminCardLeft}>
               <Ionicons name="chatbox-ellipses-outline" size={22} color="#ea580c" />
               <Text style={styles.adminCardText}>Caixa de entrada</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-kidscore" as any)}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="star-outline" size={22} color="#D97706" />
+              <Text style={styles.adminCardText}>Motor de Ranqueamento</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-criterios" as any)}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="options-outline" size={22} color="#059669" />
+              <Text style={styles.adminCardText}>Critérios Customizados</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
           </Pressable>
