@@ -364,7 +364,11 @@ export default function PerfilScreen() {
           <Text style={styles.sectionTitle}>Administração</Text>
           <Pressable
             style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-            onPress={() => Linking.openURL("/admin")}
+            onPress={() => {
+              const domain = process.env.EXPO_PUBLIC_DOMAIN || 'localhost:5000';
+              const protocol = domain.includes('localhost') ? 'http' : 'https';
+              Linking.openURL(`${protocol}://${domain}/admin`);
+            }}
             testID="admin-panel-btn"
           >
             <View style={styles.adminCardLeft}>
