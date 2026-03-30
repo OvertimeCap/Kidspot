@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   ScrollView,
   Image,
+  Linking,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -234,14 +235,6 @@ export default function PerfilScreen() {
           >
             <Text style={styles.btnOutlineText}>Criar conta</Text>
           </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.btnOutline, { marginTop: 8, borderColor: "#7C3AED", flexDirection: "row", gap: 6 }, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/backoffice-rbac")}
-            testID="backoffice-rbac-btn"
-          >
-            <Ionicons name="shield-checkmark-outline" size={16} color="#7C3AED" />
-            <Text style={[styles.btnOutlineText, { color: "#7C3AED" }]}>Backoffice</Text>
-          </Pressable>
         </View>
       </View>
     );
@@ -371,91 +364,22 @@ export default function PerfilScreen() {
           <Text style={styles.sectionTitle}>Administração</Text>
           <Pressable
             style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/admin-usuarios")}
+            onPress={() => Linking.openURL("/admin")}
+            testID="admin-panel-btn"
           >
             <View style={styles.adminCardLeft}>
-              <Ionicons name="people-outline" size={22} color="#2563EB" />
-              <Text style={styles.adminCardText}>Gerenciar usuários do app</Text>
+              <Ionicons name="desktop-outline" size={22} color="#7C3AED" />
+              <View>
+                <Text style={styles.adminCardText}>Painel de Administração</Text>
+                <Text style={[styles.adminCardText, { fontSize: 11, color: Colors.textSecondary, fontWeight: "400" }]}>
+                  Acesse pelo navegador em /admin
+                </Text>
+              </View>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/admin-filtros" as never)}
-          >
-            <View style={styles.adminCardLeft}>
-              <Ionicons name="options-outline" size={22} color="#7c3aed" />
-              <Text style={styles.adminCardText}>Controle de filtros</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/admin-prompts" as any)}
-          >
-            <View style={styles.adminCardLeft}>
-              <Ionicons name="sparkles-outline" size={22} color="#7C3AED" />
-              <Text style={styles.adminCardText}>Prompts de IA</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/admin-feedback" as never)}
-          >
-            <View style={styles.adminCardLeft}>
-              <Ionicons name="chatbox-ellipses-outline" size={22} color="#ea580c" />
-              <Text style={styles.adminCardText}>Caixa de entrada</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/admin-kidscore" as any)}
-          >
-            <View style={styles.adminCardLeft}>
-              <Ionicons name="star-outline" size={22} color="#D97706" />
-              <Text style={styles.adminCardText}>Motor de Ranqueamento</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/admin-criterios" as any)}
-          >
-            <View style={styles.adminCardLeft}>
-              <Ionicons name="options-outline" size={22} color="#059669" />
-              <Text style={styles.adminCardText}>Critérios Customizados</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adminCard, { marginTop: 8 }, pressed && { opacity: 0.85 }]}
-            onPress={() => router.push("/admin-cidades")}
-          >
-            <View style={styles.adminCardLeft}>
-              <Ionicons name="map-outline" size={22} color="#059669" />
-              <Text style={styles.adminCardText}>Gestão de cidades</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+            <Ionicons name="open-outline" size={18} color={Colors.textSecondary} />
           </Pressable>
         </View>
       )}
-
-      <View style={[styles.section, { marginTop: 16 }]}>
-        <Text style={styles.sectionTitle}>Backoffice</Text>
-        <Pressable
-          style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
-          onPress={() => router.push("/backoffice-rbac")}
-          testID="backoffice-rbac-btn"
-        >
-          <View style={styles.adminCardLeft}>
-            <Ionicons name="shield-checkmark-outline" size={22} color="#7C3AED" />
-            <Text style={styles.adminCardText}>Controle de Acesso (RBAC)</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-        </Pressable>
-      </View>
 
       <View style={styles.logoutSection}>
         <Pressable

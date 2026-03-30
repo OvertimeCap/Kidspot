@@ -228,82 +228,87 @@ The backoffice has its own separate authentication system with 4 roles:
 - Mobile app session: 2h inactivity timeout tracked via AsyncStorage `last_active`
 - On expiry, session is cleared and user is redirected to login
 
-### Frontend Access
+### Backoffice Frontend
 
-- Mobile app: Admin/Colaborador role → Profile tab → "Controle de Acesso (RBAC)" button → `app/backoffice-rbac.tsx`
-- Login with backoffice credentials (separate from app user account)
-- Super Admins see: Collaborators list + Audit Log tabs
-- Non-super-admins see: Permission matrix for their role
+The `app/backoffice-rbac.tsx` mobile screen has been removed. The backoffice RBAC system (separate `backoffice_users` table) remains active for its own API routes (`/api/backoffice/*`) but no mobile UI is provided for it.
 
-## Admin Modules
+## Web Admin Panel (`/admin`)
 
-### Module 2 — App Filter Control (`/admin-filtros`)
-Accessible from the admin section in the Profile tab for users with `admin` or `colaborador` roles.
-- Lists all filters as cards with toggle switches (on/off)
-- Create new seasonal or permanent filters with name, icon, start/end dates
-- Expired seasonal filters auto-archive on fetch
-- Public endpoint: `GET /api/filters/active` — returns currently active non-expired filters
+The admin panel is a pure HTML/JS single-page app served at `/admin` from `server/templates/admin.html`.
 
-Database table: `app_filters` (id, name, icon, active, seasonal, starts_at, ends_at, criteria, created_at, updated_at)
+### Access
 
-### Module 8 — Community Feedback Inbox (`/admin-feedback`)
-Accessible from the admin section in the Profile tab for users with `admin` or `colaborador` roles.
-- Lists all user feedback organized by type tabs: Todos / Sugestões / Denúncias / Fechados
-- Displays unread count badge in header
-- Actions per feedback: "Adicionar à fila" (creates pending place for curation), "Marcar como resolvido", "Rejeitar"
-- Public endpoint: `POST /api/feedback` — app users can submit feedback without authentication
+- URL: `/admin` (served by Express backend on port 5000)
+- Login: admin credentials (user with `role = "admin"` in the `users` table)
+- Auth: JWT stored in `localStorage` under key `kidspot_admin_token`
+- Auth endpoint: `POST /api/admin/auth/login` (admin role only)
 
-Database table: `community_feedback` (id, type, content, place_id, place_name, user_id, status, created_at, resolved_at, resolved_by)
+### Modules
 
-Feedback types: `sugestao`, `denuncia`, `fechado`
-Feedback statuses: `pendente`, `resolvido`, `rejeitado`
+| Module | Sidebar label | Description |
+|--------|--------------|-------------|
+| Dashboard | Dashboard | Module overview cards |
+| Usuários & Vínculos | Usuários & Vínculos | User list (search/filter by role), role editing, claims approval |
+| Caixa de Entrada | Caixa de Entrada | Feedback inbox tabbed by type, resolve/reject/queue actions |
+| Prompts de IA | Prompts de IA | Edit active system prompt, test with example reviews |
+| Motor de Ranqueamento | Motor de Ranqueamento | KidScore rules: inline weight editing, active/inactive toggle |
+| Critérios Customizados | Critérios Customizados | Custom criteria CRUD (key, label, field_type, show_in_filter) |
+| Filtros do App | Filtros do App | App filter cards with toggle and create/edit modal |
+| Gestão de Cidades | Gestão de Cidades | City list with search, toggle, create/edit (name, UF, lat/lng, raio, freq) |
 
-## Admin Backoffice Modules
+Modules for Locais, Stories, Parceiros show "Em desenvolvimento" placeholder.
 
-Admin and colaborador users see additional links in the Profile tab under "Administração":
-
-### Módulo 1 — Gestão de Prompts IA (`/admin-prompts`)
-- Displays and edits the active OpenAI system prompt used for review analysis
-- Prompt is stored in `ai_prompts` table; server caches it for 60s with `invalidatePromptCache()` on save
-- Test panel: send example place name + reviews and see real-time AI response before saving
-- Only `admin` role can save. `colaborador` can view and test.
-
-### Módulo 3 — Motor de Ranqueamento (`/admin-kidscore`)
-- Shows all KidScore scoring rules (name, weight, active/inactive) from `kidscore_rules` table
-- Inline editable weight fields + Switch toggles for each rule
-- Dirty-state tracking with banner + Salvar / Descartar buttons (bulk update via PUT)
-- Only `admin` can edit. `colaborador` can view.
-
-### Módulo 4 — Critérios Customizados (`/admin-criterios`)
-- Lists custom field criteria from `custom_criteria` table
-- Create form: key (slug), label, field_type (boolean/number/text), show_in_filter flag
-- Toggle per-criterion: active status and filter visibility
-- Delete with confirmation alert
-
-### New DB tables
-| Table | Purpose |
-|-------|---------|
-| `ai_prompts` | System prompt versioning for OpenAI review analysis |
-| `kidscore_rules` | Configurable scoring weights per criterion |
-| `custom_criteria` | Dynamic evaluation fields (Espaço Kids, Fraldário, etc.) |
-
-All tables are seeded on first startup via `server/config-defaults.ts`.
-
-### New API Routes (admin/colaborador required)
+### Admin API Routes
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | /api/admin/ai-prompts | admin/colab | List all prompts |
+| POST | /api/admin/auth/login | — | Login (admin role only) |
+| GET | /api/admin/auth/me | admin | Get current admin user |
+| GET | /api/admin/users | admin/colab | List users |
+| PATCH | /api/admin/users/:id/role | admin/colab | Change user role |
+| GET | /api/admin/claims | admin/colab | List ownership claims |
+| PATCH | /api/admin/claims/:id | admin/colab | Approve or deny a claim |
+| GET | /api/admin/feedback | admin/colab | List community feedback |
+| PATCH | /api/admin/feedback/:id | admin/colab | Resolve, reject, or queue feedback |
 | GET | /api/admin/ai-prompts/active | admin/colab | Get active prompt |
-| PUT | /api/admin/ai-prompts/active | admin only | Save/update active prompt |
+| PUT | /api/admin/ai-prompts/active | admin | Save/update active prompt |
 | POST | /api/admin/ai-prompts/test | admin/colab | Test prompt with example data |
 | GET | /api/admin/kidscore-rules | admin/colab | List all scoring rules |
-| PUT | /api/admin/kidscore-rules | admin only | Bulk update rules |
-| PATCH | /api/admin/kidscore-rules/:id | admin only | Update single rule |
+| PUT | /api/admin/kidscore-rules | admin | Bulk update rules |
 | GET | /api/admin/custom-criteria | admin/colab | List custom criteria |
-| POST | /api/admin/custom-criteria | admin only | Create new criterion |
-| PATCH | /api/admin/custom-criteria/:id | admin only | Update criterion |
-| DELETE | /api/admin/custom-criteria/:id | admin only | Delete criterion |
+| POST | /api/admin/custom-criteria | admin | Create new criterion |
+| PATCH | /api/admin/custom-criteria/:id | admin | Update criterion |
+| DELETE | /api/admin/custom-criteria/:id | admin | Delete criterion |
+| GET | /api/admin/filters | admin/colab | List app filters |
+| POST | /api/admin/filters | admin/colab | Create filter |
+| PATCH | /api/admin/filters/:id | admin/colab | Update filter |
+| PATCH | /api/admin/filters/:id/toggle | admin/colab | Toggle filter active |
+| GET | /api/admin/cities | admin/colab | List cities |
+| POST | /api/admin/cities | admin/colab | Create city |
+| PATCH | /api/admin/cities/:id | admin/colab | Update city |
+| PATCH | /api/admin/cities/:id/toggle | admin/colab | Toggle city active |
+| DELETE | /api/admin/cities/:id | admin/colab | Delete city |
+
+### Database Tables Used
+
+| Table | Purpose |
+|-------|---------|
+| `users` | App users managed by admin |
+| `place_claims` | Ownership claim requests |
+| `community_feedback` | User feedback (sugestao, denuncia, fechado) |
+| `ai_prompts` | System prompt versioning for OpenAI review analysis |
+| `kidscore_rules` | Configurable scoring weights per criterion |
+| `custom_criteria` | Dynamic evaluation fields (Espaço Kids, Fraldário, etc.) |
+| `app_filters` | App filter cards (seasonal or permanent) |
+| `scanned_cities` | Cities for AI scanning pipeline |
+
+All seeded on first startup via `server/config-defaults.ts`.
+
+### Mobile App Integration
+
+- Admin/Colaborador users see a single "Painel de Administração" card in the Profile tab
+- Tapping it calls `Linking.openURL("/admin")` to open the web panel in the browser
+- No mobile-native admin screens remain; all 8 `app/admin-*.tsx` and `app/backoffice-rbac.tsx` files have been removed
 
 ## Environment variables
 
