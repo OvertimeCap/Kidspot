@@ -2099,8 +2099,9 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           const endsAt   = seasonal ? document.getElementById('f-ends').value : null;
 
           if (!name) { alert('Nome é obrigatório'); return; }
+          if (!icon) { alert('Ícone é obrigatório'); return; }
 
-          const body = { name, icon: icon||null, active, seasonal,
+          const body = { name, icon, active, seasonal,
             starts_at: startsAt ? `${startsAt}T00:00:00.000Z` : null,
             ends_at:   endsAt   ? `${endsAt}T23:59:59.000Z`   : null,
           };
@@ -2306,7 +2307,12 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             try { parametros_prompt = JSON.parse(paramsRaw); } catch { alert('JSON de parâmetros inválido.'); return; }
           }
 
-          const body = { nome, estado, latitude: lat||null, longitude: lng||null, raio_km: raio||20, frequencia: selectedFreq, ativa, parametros_prompt };
+          const parsedLat = lat ? parseFloat(lat) : null;
+          const parsedLng = lng ? parseFloat(lng) : null;
+          if (lat && isNaN(parsedLat)) { alert('Latitude deve ser um número válido.'); return; }
+          if (lng && isNaN(parsedLng)) { alert('Longitude deve ser um número válido.'); return; }
+
+          const body = { nome, estado, latitude: parsedLat, longitude: parsedLng, raio_km: raio||20, frequencia: selectedFreq, ativa, parametros_prompt };
 
           const saveBtn = document.getElementById('cid-save');
           saveBtn.disabled = true;
