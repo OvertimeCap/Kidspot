@@ -53,8 +53,14 @@ import {
   resolveFeedback,
   rejectFeedback,
   addFeedbackToQueue,
+  listCities,
+  getCityById,
+  createCity,
+  updateCity,
+  toggleCityActive,
+  deleteCity,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
 import { invalidatePromptCache } from "./ai-review-analysis";
@@ -2036,6 +2042,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (err) {
       console.error("Feedback action error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Cities (Módulo 9)                                           */
+  /* ------------------------------------------------------------------ */
+
+  const updateCitySchema = insertCitySchema.partial();
+
+  app.get("/api/admin/cities", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const search = req.query.search as string | undefined;
+    try {
+      const cityList = await listCities(search);
+      res.json({ cities: cityList });
+    } catch (err) {
+      console.error("List cities error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/api/admin/cities", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const parsed = insertCitySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const city = await createCity(parsed.data);
+      res.status(201).json({ city });
+    } catch (err) {
+      console.error("Create city error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/api/admin/cities/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const parsed = updateCitySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const cityId = req.params.id as string;
+    try {
+      const city = await updateCity(cityId, parsed.data);
+      if (!city) {
+        res.status(404).json({ error: "Cidade não encontrada" });
+        return;
+      }
+      res.json({ city });
+    } catch (err) {
+      console.error("Update city error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/api/admin/cities/:id/toggle", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const cityId = req.params.id as string;
+    try {
+      const city = await toggleCityActive(cityId);
+      if (!city) {
+        res.status(404).json({ error: "Cidade não encontrada" });
+        return;
+      }
+      res.json({ city });
+    } catch (err) {
+      console.error("Toggle city error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/api/admin/cities/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const cityId = req.params.id as string;
+    try {
+      const deleted = await deleteCity(cityId);
+      if (!deleted) {
+        res.status(404).json({ error: "Cidade não encontrada" });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Delete city error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });

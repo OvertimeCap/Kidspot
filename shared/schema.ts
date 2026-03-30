@@ -232,6 +232,29 @@ export const customCriteria = pgTable("custom_criteria", {
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const scanFrequencyEnum = pgEnum("scan_frequency", [
+  "diaria",
+  "semanal",
+  "quinzenal",
+  "mensal",
+]);
+
+export const cities = pgTable("cities", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  nome: text("nome").notNull(),
+  estado: text("estado").notNull(),
+  latitude: numeric("latitude").notNull(),
+  longitude: numeric("longitude").notNull(),
+  raio_km: integer("raio_km").notNull().default(10),
+  frequencia: scanFrequencyEnum("frequencia").notNull().default("semanal"),
+  parametros_prompt: jsonb("parametros_prompt"),
+  ativa: boolean("ativa").notNull().default(true),
+  ultima_varredura: timestamp("ultima_varredura"),
+  criado_em: timestamp("criado_em").defaultNow().notNull(),
+});
+
 export const insertPlaceSchema = createInsertSchema(placesKidspot).omit({
   created_at: true,
 });
@@ -353,3 +376,19 @@ export const insertFilterSchema = z.object({
 export type AiPrompt = typeof aiPrompts.$inferSelect;
 export type KidscoreRule = typeof kidscoreRules.$inferSelect;
 export type CustomCriterion = typeof customCriteria.$inferSelect;
+
+export type City = typeof cities.$inferSelect;
+export type ScanFrequency = "diaria" | "semanal" | "quinzenal" | "mensal";
+
+export const insertCitySchema = createInsertSchema(cities)
+  .omit({ id: true, criado_em: true, ultima_varredura: true })
+  .extend({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    raio_km: z.number().int().min(1).max(500),
+    frequencia: z.enum(["diaria", "semanal", "quinzenal", "mensal"]),
+    parametros_prompt: z.record(z.unknown()).optional().nullable(),
+    ativa: z.boolean().optional(),
+  });
+
+export type InsertCity = z.infer<typeof insertCitySchema>;

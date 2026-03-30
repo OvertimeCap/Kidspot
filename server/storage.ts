@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, inArray, desc, ne, gt, lt, sql, gte, lte, like, or } from "drizzle-orm";
+import { eq, and, inArray, desc, ne, gt, lt, sql, gte, lte, like, or, ilike } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
@@ -12,6 +12,7 @@ import {
   auditLog,
   appFilters,
   communityFeedback,
+  cities,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -29,6 +30,8 @@ import {
   type AuditLogEntry,
   type AppFilter,
   type CommunityFeedback,
+  type City,
+  type InsertCity,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -901,4 +904,79 @@ export async function addFeedbackToQueue(
   }
 
   return { feedback: updated, place_id: placeId };
+}
+
+/* ------------------------------------------------------------------ */
+/* Cities                                                               */
+/* ------------------------------------------------------------------ */
+
+export async function listCities(search?: string): Promise<City[]> {
+  if (search && search.trim()) {
+    const term = `%${search.trim()}%`;
+    return db
+      .select()
+      .from(cities)
+      .where(ilike(cities.nome, term))
+      .orderBy(desc(cities.criado_em));
+  }
+  return db.select().from(cities).orderBy(desc(cities.criado_em));
+}
+
+export async function getCityById(id: string): Promise<City | null> {
+  const [city] = await db.select().from(cities).where(eq(cities.id, id)).limit(1);
+  return city ?? null;
+}
+
+export async function createCity(data: InsertCity): Promise<City> {
+  const [city] = await db
+    .insert(cities)
+    .values({
+      nome: data.nome,
+      estado: data.estado,
+      latitude: String(data.latitude),
+      longitude: String(data.longitude),
+      raio_km: data.raio_km,
+      frequencia: data.frequencia,
+      parametros_prompt: data.parametros_prompt ?? null,
+      ativa: data.ativa ?? true,
+    })
+    .returning();
+  return city;
+}
+
+export async function updateCity(id: string, data: Partial<InsertCity>): Promise<City | null> {
+  const updates: Record<string, unknown> = {};
+  if (data.nome !== undefined) updates.nome = data.nome;
+  if (data.estado !== undefined) updates.estado = data.estado;
+  if (data.latitude !== undefined) updates.latitude = String(data.latitude);
+  if (data.longitude !== undefined) updates.longitude = String(data.longitude);
+  if (data.raio_km !== undefined) updates.raio_km = data.raio_km;
+  if (data.frequencia !== undefined) updates.frequencia = data.frequencia;
+  if (data.parametros_prompt !== undefined) updates.parametros_prompt = data.parametros_prompt;
+  if (data.ativa !== undefined) updates.ativa = data.ativa;
+
+  if (Object.keys(updates).length === 0) return getCityById(id);
+
+  const [city] = await db
+    .update(cities)
+    .set(updates)
+    .where(eq(cities.id, id))
+    .returning();
+  return city ?? null;
+}
+
+export async function toggleCityActive(id: string): Promise<City | null> {
+  const city = await getCityById(id);
+  if (!city) return null;
+  const [updated] = await db
+    .update(cities)
+    .set({ ativa: !city.ativa })
+    .where(eq(cities.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function deleteCity(id: string): Promise<boolean> {
+  const result = await db.delete(cities).where(eq(cities.id, id)).returning();
+  return result.length > 0;
 }

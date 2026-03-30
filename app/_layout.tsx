@@ -97,6 +97,10 @@ function RootLayoutNav() {
         name="admin-criterios"
         options={{ headerShown: false }}
       />
+      <Stack.Screen
+        name="admin-cidades"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }

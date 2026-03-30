@@ -429,6 +429,16 @@ export default function PerfilScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
           </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, { marginTop: 8 }, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-cidades")}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="map-outline" size={22} color="#059669" />
+              <Text style={styles.adminCardText}>Gestão de cidades</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
         </View>
       )}
 
