@@ -234,6 +234,14 @@ export default function PerfilScreen() {
           >
             <Text style={styles.btnOutlineText}>Criar conta</Text>
           </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.btnOutline, { marginTop: 8, borderColor: "#7C3AED", flexDirection: "row", gap: 6 }, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/backoffice-rbac")}
+            testID="backoffice-rbac-btn"
+          >
+            <Ionicons name="shield-checkmark-outline" size={16} color="#7C3AED" />
+            <Text style={[styles.btnOutlineText, { color: "#7C3AED" }]}>Backoffice</Text>
+          </Pressable>
         </View>
       </View>
     );
@@ -367,12 +375,27 @@ export default function PerfilScreen() {
           >
             <View style={styles.adminCardLeft}>
               <Ionicons name="people-outline" size={22} color="#2563EB" />
-              <Text style={styles.adminCardText}>Gerenciar usuários</Text>
+              <Text style={styles.adminCardText}>Gerenciar usuários do app</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
           </Pressable>
         </View>
       )}
+
+      <View style={[styles.section, { marginTop: 16 }]}>
+        <Text style={styles.sectionTitle}>Backoffice</Text>
+        <Pressable
+          style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+          onPress={() => router.push("/backoffice-rbac")}
+          testID="backoffice-rbac-btn"
+        >
+          <View style={styles.adminCardLeft}>
+            <Ionicons name="shield-checkmark-outline" size={22} color="#7C3AED" />
+            <Text style={styles.adminCardText}>Controle de Acesso (RBAC)</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+        </Pressable>
+      </View>
 
       <View style={styles.logoutSection}>
         <Pressable

@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, inArray, desc, ne, gt, sql } from "drizzle-orm";
+import { eq, and, inArray, desc, ne, gt, sql, gte, lte, like, or } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
@@ -8,6 +8,8 @@ import {
   placeClaims,
   partnerStories,
   storyPhotos,
+  backofficeUsers,
+  auditLog,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -19,6 +21,10 @@ import {
   type InsertClaim,
   type PartnerStory,
   type StoryPhoto,
+  type BackofficeUser,
+  type BackofficeRole,
+  type BackofficeUserStatus,
+  type AuditLogEntry,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -565,4 +571,177 @@ export async function getStoryById(storyId: string): Promise<PartnerStory | null
     .where(eq(partnerStories.id, storyId))
     .limit(1);
   return story ?? null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Backoffice Users                                                     */
+/* ------------------------------------------------------------------ */
+
+export async function createBackofficeUser(data: {
+  name: string;
+  email: string;
+  role: BackofficeRole;
+  createdBy: string;
+  inviteToken: string;
+  inviteTokenExpiresAt: Date;
+}): Promise<BackofficeUser> {
+  const [user] = await db
+    .insert(backofficeUsers)
+    .values({
+      name: data.name,
+      email: data.email.toLowerCase(),
+      role: data.role,
+      status: "pendente",
+      invite_token: data.inviteToken,
+      invite_token_expires_at: data.inviteTokenExpiresAt,
+      created_by: data.createdBy,
+    })
+    .returning();
+  return user;
+}
+
+export async function findBackofficeUserByEmail(email: string): Promise<BackofficeUser | null> {
+  const user = await db.query.backofficeUsers.findFirst({
+    where: eq(backofficeUsers.email, email.toLowerCase()),
+  });
+  return user ?? null;
+}
+
+export async function findBackofficeUserById(id: string): Promise<BackofficeUser | null> {
+  const user = await db.query.backofficeUsers.findFirst({
+    where: eq(backofficeUsers.id, id),
+  });
+  return user ?? null;
+}
+
+export async function findBackofficeUserByInviteToken(token: string): Promise<BackofficeUser | null> {
+  const user = await db.query.backofficeUsers.findFirst({
+    where: eq(backofficeUsers.invite_token, token),
+  });
+  return user ?? null;
+}
+
+export async function activateBackofficeUser(
+  id: string,
+  passwordHash: string,
+): Promise<BackofficeUser> {
+  const [user] = await db
+    .update(backofficeUsers)
+    .set({
+      password_hash: passwordHash,
+      status: "ativo",
+      invite_token: null,
+      invite_token_expires_at: null,
+    })
+    .where(eq(backofficeUsers.id, id))
+    .returning();
+  return user;
+}
+
+export async function listBackofficeUsers(): Promise<BackofficeUser[]> {
+  return db.query.backofficeUsers.findMany({
+    orderBy: [desc(backofficeUsers.created_at)],
+  });
+}
+
+export async function updateBackofficeUserRole(
+  id: string,
+  role: BackofficeRole,
+): Promise<BackofficeUser | null> {
+  const [updated] = await db
+    .update(backofficeUsers)
+    .set({ role })
+    .where(eq(backofficeUsers.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function updateBackofficeUserStatus(
+  id: string,
+  status: BackofficeUserStatus,
+): Promise<BackofficeUser | null> {
+  const [updated] = await db
+    .update(backofficeUsers)
+    .set({ status })
+    .where(eq(backofficeUsers.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function updateBackofficeUserLastActive(id: string): Promise<void> {
+  await db
+    .update(backofficeUsers)
+    .set({ last_active_at: new Date() })
+    .where(eq(backofficeUsers.id, id));
+}
+
+export async function verifyBackofficePassword(
+  plain: string,
+  hash: string,
+): Promise<boolean> {
+  return bcrypt.compare(plain, hash);
+}
+
+/* ------------------------------------------------------------------ */
+/* Audit Log                                                            */
+/* ------------------------------------------------------------------ */
+
+export async function createAuditLog(data: {
+  userId: string;
+  userEmail: string;
+  userRole: string;
+  action: string;
+  module: string;
+  targetId?: string | null;
+  payloadBefore?: Record<string, unknown> | null;
+  payloadAfter?: Record<string, unknown> | null;
+  ip?: string | null;
+}): Promise<void> {
+  await db.insert(auditLog).values({
+    user_id: data.userId,
+    user_email: data.userEmail,
+    user_role: data.userRole,
+    action: data.action,
+    module: data.module,
+    target_id: data.targetId ?? null,
+    payload_before: data.payloadBefore ?? null,
+    payload_after: data.payloadAfter ?? null,
+    ip: data.ip ?? null,
+  });
+}
+
+export async function listAuditLogs(opts: {
+  limit?: number;
+  offset?: number;
+  userId?: string;
+  userEmail?: string;
+  module?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+}): Promise<{ entries: AuditLogEntry[]; total: number }> {
+  const { limit = 50, offset = 0, userId, userEmail, module: mod, dateFrom, dateTo } = opts;
+
+  const conditions = [];
+  if (userId) conditions.push(eq(auditLog.user_id, userId));
+  if (userEmail) conditions.push(like(auditLog.user_email, `%${userEmail}%`));
+  if (mod) conditions.push(eq(auditLog.module, mod));
+  if (dateFrom) conditions.push(gte(auditLog.created_at, dateFrom));
+  if (dateTo) conditions.push(lte(auditLog.created_at, dateTo));
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [entries, countResult] = await Promise.all([
+    db.query.auditLog.findMany({
+      where,
+      orderBy: [desc(auditLog.created_at)],
+      limit,
+      offset,
+    }),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(auditLog)
+      .where(where),
+  ]);
+
+  return { entries, total: countResult[0]?.count ?? 0 };
 }

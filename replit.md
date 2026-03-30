@@ -186,6 +186,55 @@ Supported `sortBy` values: `kidScore` (default), `distance`, `rating`.
 }
 ```
 
+## Backoffice RBAC System
+
+The backoffice has its own separate authentication system with 4 roles:
+
+- **super_admin** — Unrestricted access to all 12 modules including AI Provider Hub and User Management
+- **admin** — Access to all modules except AI Provider Hub and User Management
+- **curador** — Operational access to Curation Queue, Gallery, Community Inbox, and "Run search" in Pipeline; read-only elsewhere
+- **analista** — Read-only access in Prompts, Filters, KidScore, Curation, Pipeline, Cities, Community, Partnerships
+
+### Backoffice Auth Flow
+
+1. A super admin account is seeded in the DB on first deploy (credentials managed via environment or DB tooling — do not commit credentials to source code).
+2. Super admin invites collaborators via `POST /api/backoffice/users/invite`
+3. Invited user receives an activation link with a one-time token (72h TTL)
+4. User activates account via `POST /api/backoffice/auth/activate` with token + new password
+5. User logs in via `POST /api/backoffice/auth/login` and receives a 2h JWT
+
+### Backoffice API Routes
+
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | /api/backoffice/auth/login | — | Login with email/password |
+| GET | /api/backoffice/auth/me | backoffice | Get current user |
+| POST | /api/backoffice/auth/activate | — | Activate account with invite token |
+| GET | /api/backoffice/users | super_admin | List all backoffice collaborators |
+| POST | /api/backoffice/users/invite | super_admin | Invite a new collaborator |
+| PATCH | /api/backoffice/users/:id/role | super_admin | Change a collaborator's role |
+| PATCH | /api/backoffice/users/:id/status | super_admin | Activate/deactivate a collaborator |
+| GET | /api/backoffice/audit-log | super_admin | Paginated audit log with filters |
+| GET | /api/backoffice/permissions | backoffice | Permission matrix for current role |
+
+### Backoffice Database Tables
+
+- `backoffice_users` — Collaborators with role, status, invite token
+- `audit_log` — All actions with user, action, module, before/after payload, IP, timestamp
+
+### Session Expiry
+
+- Backoffice JWT TTL: 2 hours
+- Mobile app session: 2h inactivity timeout tracked via AsyncStorage `last_active`
+- On expiry, session is cleared and user is redirected to login
+
+### Frontend Access
+
+- Mobile app: Admin/Colaborador role → Profile tab → "Controle de Acesso (RBAC)" button → `app/backoffice-rbac.tsx`
+- Login with backoffice credentials (separate from app user account)
+- Super Admins see: Collaborators list + Audit Log tabs
+- Non-super-admins see: Permission matrix for their role
+
 ## Environment variables
 
 | Variable | Required | Description |
@@ -195,3 +244,9 @@ Supported `sortBy` values: `kidScore` (default), `distance`, `rating`.
 | JWT_SECRET | Yes (prod) | Secret key for signing JWT tokens (defaults to dev fallback) |
 | FOURSQUARE_API_KEY | No | Foursquare Places API key (enrichment) |
 | OPENAI_API_KEY | No | OpenAI API key (AI review analysis) |
+| SMTP_HOST | No | SMTP server host for invite emails (if unset, link is returned in API response) |
+| SMTP_PORT | No | SMTP port (default: 587) |
+| SMTP_SECURE | No | Set to "true" for TLS on port 465 |
+| SMTP_USER | No | SMTP auth username |
+| SMTP_PASS | No | SMTP auth password |
+| SMTP_FROM | No | From address for invite emails (default: noreply@kidspot.app) |

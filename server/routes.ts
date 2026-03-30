@@ -1,8 +1,9 @@
-import type { Express, Response } from "express";
+import type { Express, Response, NextFunction } from "express";
 import { createServer, type Server } from "node:http";
 import { z } from "zod";
 import { pool } from "./db";
 import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace } from "./google-places";
+import { sendInviteEmail } from "./email";
 import {
   createReview,
   getReviewsForPlace,
@@ -28,12 +29,55 @@ import {
   getStoryPhotos,
   getStoryPhotoById,
   getStoryById,
+  createBackofficeUser,
+  findBackofficeUserByEmail,
+  findBackofficeUserById,
+  findBackofficeUserByInviteToken,
+  activateBackofficeUser,
+  listBackofficeUsers,
+  updateBackofficeUserRole,
+  updateBackofficeUserStatus,
+  updateBackofficeUserLastActive,
+  verifyBackofficePassword,
+  createAuditLog,
+  listAuditLogs,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, type UserRole } from "@shared/schema";
-import { requireAuth, requireAdmin, signToken, type AuthRequest } from "./auth";
+import { insertReviewSchema, insertClaimSchema, type UserRole, type BackofficeRole } from "@shared/schema";
+import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
+import crypto from "crypto";
+import bcrypt from "bcryptjs";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  /* ------------------------------------------------------------------ */
+  /* Backoffice middleware helpers                                        */
+  /* ------------------------------------------------------------------ */
+
+  function trackBackofficeActivity(req: AuthRequest, _res: Response, next: NextFunction): void {
+    if (req.backofficeUser) {
+      updateBackofficeUserLastActive(req.backofficeUser.backofficeUserId).catch(() => {});
+    }
+    next();
+  }
+
+  function withAudit(action: string, module: string) {
+    return (req: AuthRequest, res: Response, next: NextFunction): void => {
+      res.on("finish", () => {
+        if (res.statusCode >= 200 && res.statusCode < 300 && req.backofficeUser) {
+          createAuditLog({
+            userId: req.backofficeUser.backofficeUserId,
+            userEmail: req.backofficeUser.email,
+            userRole: req.backofficeUser.role,
+            action,
+            module,
+            ip: req.ip,
+          }).catch(() => {});
+        }
+      });
+      next();
+    };
+  }
+
   app.get("/api/health", (_req: AuthRequest, res: Response) => {
     res.json({ ok: true });
   });
@@ -911,6 +955,549 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Get story photo error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Backoffice Auth                                                      */
+  /* ------------------------------------------------------------------ */
+
+  const backofficeLoginSchema = z.object({
+    email: z.string().email(),
+    password: z.string().min(1),
+  });
+
+  app.post("/api/backoffice/auth/login", async (req: AuthRequest, res: Response) => {
+    const parsed = backofficeLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const { email, password } = parsed.data;
+
+    try {
+      const user = await findBackofficeUserByEmail(email.toLowerCase());
+      if (!user) {
+        res.status(401).json({ error: "E-mail ou senha incorretos" });
+        return;
+      }
+
+      if (user.status === "inativo") {
+        res.status(403).json({ error: "Conta desativada. Entre em contato com o administrador." });
+        return;
+      }
+
+      if (user.status === "pendente" || !user.password_hash) {
+        res.status(403).json({ error: "Conta ainda não ativada. Verifique seu e-mail de convite." });
+        return;
+      }
+
+      const valid = await verifyBackofficePassword(password, user.password_hash);
+      if (!valid) {
+        res.status(401).json({ error: "E-mail ou senha incorretos" });
+        return;
+      }
+
+      await updateBackofficeUserLastActive(user.id);
+
+      const token = signBackofficeToken({
+        backofficeUserId: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+
+      await createAuditLog({
+        userId: user.id,
+        userEmail: user.email,
+        userRole: user.role,
+        action: "login",
+        module: "auth",
+        ip: req.ip,
+      });
+
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          status: user.status,
+        },
+      });
+    } catch (err) {
+      console.error("Backoffice login error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/backoffice/auth/me", requireBackofficeAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const user = await findBackofficeUserById(req.backofficeUser!.backofficeUserId);
+      if (!user || user.status === "inativo") {
+        res.status(401).json({ error: "Usuário não encontrado ou inativo" });
+        return;
+      }
+
+      await updateBackofficeUserLastActive(user.id);
+
+      res.json({
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          status: user.status,
+        },
+      });
+    } catch (err) {
+      console.error("Backoffice me error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const activateAccountSchema = z.object({
+    token: z.string().min(1),
+    password: z.string().min(8),
+  });
+
+  app.post("/api/backoffice/auth/refresh", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+    try {
+      const caller = req.backofficeUser!;
+      const user = await findBackofficeUserById(caller.backofficeUserId);
+      if (!user || user.status === "inativo") {
+        res.status(401).json({ error: "Sessão inválida" });
+        return;
+      }
+      const newToken = signBackofficeToken({
+        backofficeUserId: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+      await updateBackofficeUserLastActive(user.id);
+      res.json({ token: newToken });
+    } catch (err) {
+      console.error("Backoffice refresh error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/api/backoffice/auth/activate", async (req: AuthRequest, res: Response) => {
+    const parsed = activateAccountSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const { token, password } = parsed.data;
+
+    try {
+      const user = await findBackofficeUserByInviteToken(token);
+      if (!user) {
+        res.status(400).json({ error: "Token de convite inválido ou já utilizado" });
+        return;
+      }
+
+      if (user.invite_token_expires_at && user.invite_token_expires_at < new Date()) {
+        res.status(400).json({ error: "Token de convite expirado. Solicite um novo convite." });
+        return;
+      }
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      const activated = await activateBackofficeUser(user.id, passwordHash);
+
+      await createAuditLog({
+        userId: user.id,
+        userEmail: user.email,
+        userRole: user.role,
+        action: "ativou_conta",
+        module: "auth",
+        ip: req.ip,
+      });
+
+      const jwtToken = signBackofficeToken({
+        backofficeUserId: activated.id,
+        email: activated.email,
+        role: activated.role,
+        name: activated.name,
+      });
+
+      res.json({
+        token: jwtToken,
+        user: {
+          id: activated.id,
+          name: activated.name,
+          email: activated.email,
+          role: activated.role,
+          status: activated.status,
+        },
+      });
+    } catch (err) {
+      console.error("Backoffice activate error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Backoffice — User Management (Super Admin only)                     */
+  /* ------------------------------------------------------------------ */
+
+  const BACKOFFICE_MODULES = [
+    "gestao_prompts",
+    "filtros_app",
+    "kidscore",
+    "criterios_customizados",
+    "fila_curadoria",
+    "galeria",
+    "operacao_ia",
+    "comunidade",
+    "gestao_cidades",
+    "provedores_ia",
+    "gestao_usuarios",
+    "parcerias",
+  ] as const;
+
+  const inviteSchema = z.object({
+    name: z.string().min(2),
+    email: z.string().email(),
+    role: z.enum(["super_admin", "admin", "curador", "analista"]),
+  });
+
+  app.post(
+    "/api/backoffice/users/invite",
+    requireBackofficeAuth,
+    requireRole("super_admin"),
+    trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = inviteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+
+      const { name, email, role } = parsed.data;
+      const caller = req.backofficeUser!;
+
+      try {
+        const existing = await findBackofficeUserByEmail(email);
+        if (existing) {
+          res.status(409).json({ error: "E-mail já cadastrado no backoffice" });
+          return;
+        }
+
+        const inviteToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+
+        const user = await createBackofficeUser({
+          name,
+          email,
+          role: role as BackofficeRole,
+          createdBy: caller.backofficeUserId,
+          inviteToken,
+          inviteTokenExpiresAt: expiresAt,
+        });
+
+        await createAuditLog({
+          userId: caller.backofficeUserId,
+          userEmail: caller.email,
+          userRole: caller.role,
+          action: "convidou_usuario",
+          module: "gestao_usuarios",
+          targetId: user.id,
+          payloadAfter: { name, email, role },
+          ip: req.ip,
+        });
+
+        const proto = req.header("x-forwarded-proto") || req.protocol || "https";
+        const host = req.header("x-forwarded-host") || req.get("host");
+        const activationLink = `${proto}://${host}/backoffice/ativar?token=${inviteToken}`;
+
+        const emailResult = await sendInviteEmail({
+          to: email,
+          name,
+          role,
+          activationLink,
+          invitedBy: caller.name,
+        });
+
+        res.status(201).json({
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            status: user.status,
+          },
+          activationLink,
+          emailSent: emailResult.sent,
+          message: emailResult.note,
+        });
+      } catch (err) {
+        console.error("Backoffice invite error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.get(
+    "/api/backoffice/users",
+    requireBackofficeAuth,
+    requireRole("super_admin"),
+    trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const users = await listBackofficeUsers();
+        const safe = users.map((u) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          status: u.status,
+          created_at: u.created_at,
+          last_active_at: u.last_active_at,
+        }));
+        res.json({ users: safe });
+      } catch (err) {
+        console.error("List backoffice users error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const updateBackofficeRoleSchema = z.object({
+    role: z.enum(["super_admin", "admin", "curador", "analista"]),
+  });
+
+  app.patch(
+    "/api/backoffice/users/:id/role",
+    requireBackofficeAuth,
+    requireRole("super_admin"),
+    trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = updateBackofficeRoleSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+
+      const caller = req.backofficeUser!;
+      const targetId = req.params.id as string;
+
+      if (targetId === caller.backofficeUserId) {
+        res.status(400).json({ error: "Você não pode alterar seu próprio perfil" });
+        return;
+      }
+
+      try {
+        const target = await findBackofficeUserById(targetId);
+        if (!target) {
+          res.status(404).json({ error: "Usuário não encontrado" });
+          return;
+        }
+
+        const before = { role: target.role };
+        const updated = await updateBackofficeUserRole(targetId, parsed.data.role as BackofficeRole);
+
+        await createAuditLog({
+          userId: caller.backofficeUserId,
+          userEmail: caller.email,
+          userRole: caller.role,
+          action: "alterou_perfil",
+          module: "gestao_usuarios",
+          targetId,
+          payloadBefore: before,
+          payloadAfter: { role: parsed.data.role },
+          ip: req.ip,
+        });
+
+        res.json({
+          user: {
+            id: updated!.id,
+            name: updated!.name,
+            email: updated!.email,
+            role: updated!.role,
+            status: updated!.status,
+          },
+        });
+      } catch (err) {
+        console.error("Update backoffice role error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const updateBackofficeStatusSchema = z.object({
+    status: z.enum(["ativo", "inativo"]),
+  });
+
+  app.patch(
+    "/api/backoffice/users/:id/status",
+    requireBackofficeAuth,
+    requireRole("super_admin"),
+    trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = updateBackofficeStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+
+      const caller = req.backofficeUser!;
+      const targetId = req.params.id as string;
+
+      if (targetId === caller.backofficeUserId) {
+        res.status(400).json({ error: "Você não pode alterar seu próprio status" });
+        return;
+      }
+
+      try {
+        const target = await findBackofficeUserById(targetId);
+        if (!target) {
+          res.status(404).json({ error: "Usuário não encontrado" });
+          return;
+        }
+
+        const before = { status: target.status };
+        const updated = await updateBackofficeUserStatus(targetId, parsed.data.status);
+
+        await createAuditLog({
+          userId: caller.backofficeUserId,
+          userEmail: caller.email,
+          userRole: caller.role,
+          action: parsed.data.status === "ativo" ? "ativou_usuario" : "desativou_usuario",
+          module: "gestao_usuarios",
+          targetId,
+          payloadBefore: before,
+          payloadAfter: { status: parsed.data.status },
+          ip: req.ip,
+        });
+
+        res.json({
+          user: {
+            id: updated!.id,
+            name: updated!.name,
+            email: updated!.email,
+            role: updated!.role,
+            status: updated!.status,
+          },
+        });
+      } catch (err) {
+        console.error("Update backoffice status error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Backoffice — Audit Log (Super Admin only)                           */
+  /* ------------------------------------------------------------------ */
+
+  app.get(
+    "/api/backoffice/audit-log",
+    requireBackofficeAuth,
+    requireRole("super_admin"),
+    async (req: AuthRequest, res: Response) => {
+      const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 200);
+      const offset = parseInt((req.query.offset as string) || "0", 10);
+      const userId = req.query.user_id as string | undefined;
+      const userEmail = req.query.user_email as string | undefined;
+      const mod = req.query.module as string | undefined;
+      const dateFrom = req.query.date_from ? new Date(req.query.date_from as string) : undefined;
+      const dateTo = req.query.date_to ? new Date(req.query.date_to as string) : undefined;
+
+      try {
+        const result = await listAuditLogs({ limit, offset, userId, userEmail, module: mod, dateFrom, dateTo });
+        res.json(result);
+      } catch (err) {
+        console.error("List audit log error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Backoffice — Operational module routes (RBAC enforced)              */
+  /* Permission matrix (from product spec):                              */
+  /*   super_admin: all modules full                                     */
+  /*   admin: all except provedores_ia & gestao_usuarios                 */
+  /*   curador: curadoria/galeria/operacao-ia(search)/comunidade write;  */
+  /*            parcerias/prompts/filtros/kidscore/cidades read          */
+  /*   analista: read-only on most modules                               */
+  /* ------------------------------------------------------------------ */
+
+  /* Modules 1–12: read-only discovery endpoints (RBAC enforced per permission matrix).
+   * Write operations for each module will be added incrementally as each module is built.
+   * These GET routes establish correct role enforcement and activity tracking. */
+
+  /* 1. Gestão de Prompts — full: super_admin/admin; read: analista */
+  app.get("/api/backoffice/prompts", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "gestao_prompts", items: [] }));
+
+  /* 2. Filtros do App — full: super_admin/admin; read: analista */
+  app.get("/api/backoffice/filtros", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "filtros_app", items: [] }));
+
+  /* 3. KidScore — full: super_admin/admin; read: analista */
+  app.get("/api/backoffice/kidscore", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "kidscore", config: {} }));
+
+  /* 4. Critérios Customizados — full: super_admin/admin only */
+  app.get("/api/backoffice/criterios", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "criterios_customizados", items: [] }));
+
+  /* 5. Fila de Curadoria — full: super_admin/admin/curador; read: analista */
+  app.get("/api/backoffice/curadoria", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "fila_curadoria", items: [] }));
+
+  /* 6. Galeria de Fotos — super_admin/admin/curador */
+  app.get("/api/backoffice/galeria", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "galeria", items: [] }));
+
+  /* 7. Operação de IA — read: all; full write: super_admin/admin */
+  app.get("/api/backoffice/operacao-ia", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "operacao_ia", stats: {} }));
+
+  /* 8. Comunidade — full: super_admin/admin/curador; read: analista */
+  app.get("/api/backoffice/comunidade", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "comunidade", items: [] }));
+
+  /* 9. Gestão de Cidades — full: super_admin/admin; read: analista */
+  app.get("/api/backoffice/cidades", requireBackofficeAuth, requireRole("super_admin", "admin", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "gestao_cidades", items: [] }));
+
+  /* 10. Provedores de IA — super_admin only */
+  app.get("/api/backoffice/provedores-ia", requireBackofficeAuth, requireRole("super_admin"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "provedores_ia", providers: [] }));
+
+  /* 12. Parcerias — full: super_admin/admin; read: curador/analista */
+  app.get("/api/backoffice/parcerias", requireBackofficeAuth, requireRole("super_admin", "admin", "curador", "analista"), trackBackofficeActivity,
+    (_req: AuthRequest, res: Response) => res.json({ module: "parcerias", items: [] }));
+
+  /* ------------------------------------------------------------------ */
+  /* Backoffice — Permission check endpoint                              */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/backoffice/permissions", requireBackofficeAuth, trackBackofficeActivity, (req: AuthRequest, res: Response) => {
+    const role = req.backofficeUser!.role;
+
+    const permissions: Record<string, "full" | "read" | "none" | "partial"> = {
+      gestao_prompts: role === "super_admin" || role === "admin" ? "full" : role === "analista" ? "read" : "none",
+      filtros_app: role === "super_admin" || role === "admin" ? "full" : role === "analista" ? "read" : "none",
+      kidscore: role === "super_admin" || role === "admin" ? "full" : role === "analista" ? "read" : "none",
+      criterios_customizados: role === "super_admin" || role === "admin" ? "full" : "none",
+      fila_curadoria: role === "super_admin" || role === "admin" || role === "curador" ? "full" : role === "analista" ? "read" : "none",
+      galeria: role === "super_admin" || role === "admin" || role === "curador" ? "full" : "none",
+      operacao_ia: role === "super_admin" || role === "admin" ? "full" : role === "curador" ? "partial" : role === "analista" ? "read" : "none",
+      comunidade: role === "super_admin" || role === "admin" || role === "curador" ? "full" : role === "analista" ? "read" : "none",
+      gestao_cidades: role === "super_admin" || role === "admin" ? "full" : role === "analista" ? "read" : "none",
+      provedores_ia: role === "super_admin" ? "full" : "none",
+      gestao_usuarios: role === "super_admin" ? "full" : "none",
+      parcerias: role === "super_admin" || role === "admin" ? "full" : role === "curador" || role === "analista" ? "read" : "none",
+    };
+
+    res.json({ role, permissions });
   });
 
   const httpServer = createServer(app);

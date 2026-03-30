@@ -14,6 +14,19 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const backofficeRoleEnum = pgEnum("backoffice_role", [
+  "super_admin",
+  "admin",
+  "curador",
+  "analista",
+]);
+
+export const backofficeUserStatusEnum = pgEnum("backoffice_user_status", [
+  "ativo",
+  "pendente",
+  "inativo",
+]);
+
 export const userRoleEnum = pgEnum("user_role", [
   "admin",
   "colaborador",
@@ -199,3 +212,40 @@ export type InsertClaim = z.infer<typeof insertClaimSchema>;
 
 export type PartnerStory = typeof partnerStories.$inferSelect;
 export type StoryPhoto = typeof storyPhotos.$inferSelect;
+
+export const backofficeUsers = pgTable("backoffice_users", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  password_hash: text("password_hash"),
+  role: backofficeRoleEnum("role").notNull(),
+  status: backofficeUserStatusEnum("status").notNull().default("pendente"),
+  invite_token: text("invite_token"),
+  invite_token_expires_at: timestamp("invite_token_expires_at"),
+  created_by: varchar("created_by"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  last_active_at: timestamp("last_active_at"),
+});
+
+export const auditLog = pgTable("audit_log", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  user_id: varchar("user_id").notNull(),
+  user_email: text("user_email").notNull(),
+  user_role: text("user_role").notNull(),
+  action: text("action").notNull(),
+  module: text("module").notNull(),
+  target_id: text("target_id"),
+  payload_before: jsonb("payload_before"),
+  payload_after: jsonb("payload_after"),
+  ip: text("ip"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type BackofficeUser = typeof backofficeUsers.$inferSelect;
+export type BackofficeRole = "super_admin" | "admin" | "curador" | "analista";
+export type BackofficeUserStatus = "ativo" | "pendente" | "inativo";
+export type AuditLogEntry = typeof auditLog.$inferSelect;

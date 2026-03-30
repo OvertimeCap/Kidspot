@@ -1,9 +1,12 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { apiRequest, setAuthToken } from "@/lib/query-client";
 
 const TOKEN_STORAGE_KEY = "kidspot_auth_token";
 const USER_STORAGE_KEY = "kidspot_auth_user";
+const LAST_ACTIVE_KEY = "kidspot_last_active";
+const SESSION_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 export type UserRole = "admin" | "colaborador" | "parceiro" | "estabelecimento" | "usuario";
 
@@ -43,6 +46,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const sessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSession = useCallback(async () => {
+    if (sessionTimerRef.current) clearTimeout(sessionTimerRef.current);
+    setToken(null);
+    setUser(null);
+    setAuthToken(null);
+    await Promise.all([
+      AsyncStorage.removeItem(TOKEN_STORAGE_KEY),
+      AsyncStorage.removeItem(USER_STORAGE_KEY),
+      AsyncStorage.removeItem(LAST_ACTIVE_KEY),
+    ]);
+  }, []);
+
+  const resetSessionTimer = useCallback(() => {
+    if (sessionTimerRef.current) clearTimeout(sessionTimerRef.current);
+    AsyncStorage.setItem(LAST_ACTIVE_KEY, String(Date.now())).catch(() => {});
+    sessionTimerRef.current = setTimeout(() => {
+      clearSession();
+    }, SESSION_TIMEOUT_MS);
+  }, [clearSession]);
 
   const fetchAndSetUser = useCallback(async () => {
     const res = await apiRequest("GET", "/api/auth/me");
@@ -77,24 +101,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const savedToken = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
         if (!savedToken) return;
 
+        const lastActiveStr = await AsyncStorage.getItem(LAST_ACTIVE_KEY);
+        if (lastActiveStr) {
+          const lastActive = parseInt(lastActiveStr, 10);
+          if (Date.now() - lastActive > SESSION_TIMEOUT_MS) {
+            await Promise.all([
+              AsyncStorage.removeItem(TOKEN_STORAGE_KEY),
+              AsyncStorage.removeItem(USER_STORAGE_KEY),
+              AsyncStorage.removeItem(LAST_ACTIVE_KEY),
+            ]);
+            return;
+          }
+        }
+
         setAuthToken(savedToken);
         const validatedUser = await fetchAndSetUser();
         if (!validatedUser) {
           await Promise.all([
             AsyncStorage.removeItem(TOKEN_STORAGE_KEY),
             AsyncStorage.removeItem(USER_STORAGE_KEY),
+            AsyncStorage.removeItem(LAST_ACTIVE_KEY),
           ]);
           setAuthToken(null);
           return;
         }
         setToken(savedToken);
+        resetSessionTimer();
       } catch {
         // ignore storage or network errors — user stays logged out
       } finally {
         setIsLoading(false);
       }
     })();
-  }, [fetchAndSetUser]);
+  }, [fetchAndSetUser, resetSessionTimer]);
 
   const persist = useCallback(async (newToken: string, newUser: AuthUser) => {
     setToken(newToken);
@@ -104,7 +143,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       AsyncStorage.setItem(TOKEN_STORAGE_KEY, newToken),
       AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(newUser)),
     ]);
-  }, []);
+    resetSessionTimer();
+  }, [resetSessionTimer]);
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await apiRequest("POST", "/api/auth/login", { email, password });
@@ -129,14 +169,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   const logout = useCallback(async () => {
-    setToken(null);
-    setUser(null);
-    setAuthToken(null);
-    await Promise.all([
-      AsyncStorage.removeItem(TOKEN_STORAGE_KEY),
-      AsyncStorage.removeItem(USER_STORAGE_KEY),
-    ]);
-  }, []);
+    await clearSession();
+  }, [clearSession]);
 
   const refreshUser = useCallback(async () => {
     try {
@@ -145,6 +179,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // silent
     }
   }, [fetchAndSetUser]);
+
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === "active" && token) {
+        resetSessionTimer();
+      }
+    };
+    const sub = AppState.addEventListener("change", handleAppStateChange);
+    return () => sub.remove();
+  }, [token, resetSessionTimer]);
 
   return (
     <AuthContext.Provider value={{ user, token, isLoading, login, register, loginWithGoogle, logout, refreshUser }}>
