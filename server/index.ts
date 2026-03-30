@@ -184,10 +184,9 @@ function serveAdminPanel(app: express.Application) {
     return;
   }
 
-  const adminHtml = fs.readFileSync(adminTemplatePath, "utf-8");
-
   // Serve admin panel at /admin and /admin/*
   app.use("/admin", (req: Request, res: Response) => {
+    const adminHtml = fs.readFileSync(adminTemplatePath, "utf-8");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.status(200).send(adminHtml);
   });
