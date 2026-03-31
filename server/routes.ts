@@ -4,7 +4,7 @@ import { z } from "zod";
 import { pool, db } from "./db";
 import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace, geocodeCityPlace } from "./google-places";
 import { sendInviteEmail } from "./email";
-import { runPipelineForCity, runPipelineForAllCities } from "./pipeline";
+import { runPipelineForCity, runPipelineForAllCities, previewPipelineForCity } from "./pipeline";
 import { encryptApiKey, decryptApiKey, maskApiKey } from "./ai-crypto";
 import {
   createReview,
@@ -85,11 +85,11 @@ import {
   incrementDetailAccess,
   getSponsorshipPerformance,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting, pipelineBlacklist } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
 import { invalidatePromptCache } from "./ai-review-analysis";
-import { eq, desc, sql as sqlExpr } from "drizzle-orm";
+import { eq, desc, and, ilike, sql as sqlExpr } from "drizzle-orm";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 
@@ -2310,6 +2310,191 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ runs: rows, total: countResult[0]?.count ?? 0 });
       } catch (err) {
         console.error("List pipeline runs error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Pipeline preview & triage                                           */
+  /* ------------------------------------------------------------------ */
+
+  app.post("/api/admin/pipeline/preview", requireAuth,
+    async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      const schema = z.object({
+        city_id: z.string(),
+        limit: z.number().int().min(1).max(200).optional().default(50),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const result = await previewPipelineForCity(parsed.data.city_id, parsed.data.limit);
+        res.json(result);
+      } catch (err) {
+        console.error("Pipeline preview error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  app.post("/api/admin/pipeline/triage", requireAuth,
+    async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      const schema = z.object({
+        city_id: z.string(),
+        city_name: z.string(),
+        places: z.array(z.object({
+          place_id: z.string(),
+          name: z.string(),
+          formatted_address: z.string().optional().default(""),
+          types: z.array(z.string()).optional().default([]),
+          lat: z.number(),
+          lng: z.number(),
+        })),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        let inserted = 0;
+        for (const place of parsed.data.places) {
+          const existing = await db.query.placesKidspot.findFirst({
+            where: eq(placesKidspot.place_id, place.place_id),
+          });
+          if (!existing) {
+            await db.insert(placesKidspot).values({
+              place_id: place.place_id,
+              city: parsed.data.city_name,
+              ciudad_id: parsed.data.city_id,
+              lat: String(place.lat),
+              lng: String(place.lng),
+              status: "pendente",
+            });
+            inserted++;
+          }
+        }
+        if (inserted > 0) {
+          await db
+            .update(cities)
+            .set({ ultima_varredura: new Date() })
+            .where(eq(cities.id, parsed.data.city_id));
+        }
+        res.json({ inserted });
+      } catch (err) {
+        console.error("Pipeline triage error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Pipeline blacklist                                                   */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/blacklist", requireAuth,
+    async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      try {
+        const cityId = req.query.city_id as string | undefined;
+        const search = req.query.search as string | undefined;
+
+        const conditions = [];
+        if (cityId) conditions.push(eq(pipelineBlacklist.city_id, cityId));
+        if (search) conditions.push(ilike(pipelineBlacklist.nome, `%${search}%`));
+
+        const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+        const rows = await db
+          .select()
+          .from(pipelineBlacklist)
+          .where(where)
+          .orderBy(desc(pipelineBlacklist.excluido_em));
+
+        res.json({ items: rows });
+      } catch (err) {
+        console.error("List blacklist error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  app.post("/api/admin/blacklist", requireAuth,
+    async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      const schema = z.object({
+        items: z.array(z.object({
+          place_id: z.string(),
+          city_id: z.string().optional(),
+          city_name: z.string().optional(),
+          nome: z.string(),
+          tipo: z.string().optional(),
+        })),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        let added = 0;
+        for (const item of parsed.data.items) {
+          const existing = await db.query.pipelineBlacklist.findFirst({
+            where: eq(pipelineBlacklist.place_id, item.place_id),
+          });
+          if (!existing) {
+            await db.insert(pipelineBlacklist).values({
+              place_id: item.place_id,
+              city_id: item.city_id ?? null,
+              city_name: item.city_name ?? null,
+              nome: item.nome,
+              tipo: item.tipo ?? null,
+              excluido_por: caller.id,
+            });
+            added++;
+          }
+        }
+        res.json({ added });
+      } catch (err) {
+        console.error("Add to blacklist error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  app.delete("/api/admin/blacklist/:id", requireAuth,
+    async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      try {
+        await db.delete(pipelineBlacklist).where(eq(pipelineBlacklist.id, req.params.id));
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Remove from blacklist error:", err);
         res.status(500).json({ error: (err as Error).message });
       }
     }

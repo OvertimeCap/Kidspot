@@ -565,3 +565,18 @@ export const pipelineRouting = pgTable("pipeline_routing", {
 
 export type AiProvider = typeof aiProviders.$inferSelect;
 export type PipelineRouting = typeof pipelineRouting.$inferSelect;
+
+export const pipelineBlacklist = pgTable("pipeline_blacklist", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  place_id: text("place_id").notNull().unique(),
+  city_id: varchar("city_id").references(() => cities.id),
+  city_name: text("city_name"),
+  nome: text("nome").notNull(),
+  tipo: text("tipo"),
+  excluido_em: timestamp("excluido_em").defaultNow().notNull(),
+  excluido_por: varchar("excluido_por"),
+});
+
+export type PipelineBlacklistEntry = typeof pipelineBlacklist.$inferSelect;
