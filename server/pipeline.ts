@@ -40,9 +40,15 @@ async function ingestCity(cityId: string, cityName: string, lat: number, lng: nu
       }))
     );
 
-    placesFound = filtered.length;
+    const blacklisted = await db
+      .select({ place_id: pipelineBlacklist.place_id })
+      .from(pipelineBlacklist);
+    const blacklistSet = new Set(blacklisted.map((b) => b.place_id));
+    const notBlacklisted = filtered.filter((p) => !blacklistSet.has(p.place_id));
 
-    for (const place of filtered) {
+    placesFound = notBlacklisted.length;
+
+    for (const place of notBlacklisted) {
       try {
         const existing = await db.query.placesKidspot.findFirst({
           where: eq(placesKidspot.place_id, place.place_id),
@@ -105,6 +111,11 @@ export async function runPipelineForCity(cityId: string): Promise<PipelineRunRes
       })
       .where(eq(pipelineRuns.id, run.id))
       .returning();
+
+    await db
+      .update(cities)
+      .set({ ultima_varredura: new Date() })
+      .where(eq(cities.id, cityId));
 
     return {
       run_id: updated.id,
