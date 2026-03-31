@@ -279,6 +279,47 @@ export const customCriteria = pgTable("custom_criteria", {
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
+
+export const curationStatusEnum = pgEnum("curation_status", [
+  "pendente",
+  "aprovado",
+  "rejeitado",
+]);
+
+export const placePhotos = pgTable("place_photos", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  place_id: text("place_id")
+    .notNull()
+    .references(() => placesKidspot.place_id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  photo_reference: text("photo_reference"),
+  is_cover: boolean("is_cover").notNull().default(false),
+  order: integer("order").notNull().default(0),
+  deleted: boolean("deleted").notNull().default(false),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const placeKidspotMeta = pgTable("place_kidspot_meta", {
+  place_id: text("place_id")
+    .primaryKey()
+    .references(() => placesKidspot.place_id, { onDelete: "cascade" }),
+  name: text("name"),
+  address: text("address"),
+  category: text("category"),
+  kid_score: integer("kid_score"),
+  ai_evidences: jsonb("ai_evidences"),
+  curation_status: curationStatusEnum("curation_status").notNull().default("pendente"),
+  description: text("description"),
+  custom_criteria: jsonb("custom_criteria"),
+  curated_by: varchar("curated_by"),
+  curated_at: timestamp("curated_at"),
+  ingested_at: timestamp("ingested_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+
 export const insertPlaceSchema = createInsertSchema(placesKidspot).omit({
   created_at: true,
 });
@@ -403,6 +444,13 @@ export type CustomCriterion = typeof customCriteria.$inferSelect;
 
 export type City = typeof cities.$inferSelect;
 export type ScanFrequency = "diaria" | "semanal" | "quinzenal" | "mensal";
+
+export type PlacePhoto = typeof placePhotos.$inferSelect;
+export type InsertPlacePhoto = typeof placePhotos.$inferInsert;
+
+export type PlaceKidspotMeta = typeof placeKidspotMeta.$inferSelect;
+export type InsertPlaceKidspotMeta = typeof placeKidspotMeta.$inferInsert;
+export type CurationStatus = "pendente" | "aprovado" | "rejeitado";
 
 export const insertCitySchema = createInsertSchema(cities)
   .omit({ id: true, criado_em: true, ultima_varredura: true })

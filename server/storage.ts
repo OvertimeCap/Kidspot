@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, inArray, desc, ne, gt, lt, sql, gte, lte, like, or, ilike } from "drizzle-orm";
+import { eq, and, inArray, desc, ne, gt, lt, sql, gte, lte, like, or, ilike, asc } from "drizzle-orm";
 import {
   placesKidspot,
   reviews,
@@ -13,6 +13,8 @@ import {
   appFilters,
   communityFeedback,
   cities,
+  placePhotos,
+  placeKidspotMeta,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -33,6 +35,8 @@ import {
   type CommunityFeedback,
   type City,
   type InsertCity,
+  type PlacePhoto,
+  type CurationStatus,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -1033,4 +1037,238 @@ export async function toggleCityActive(id: string): Promise<City | null> {
 export async function deleteCity(id: string): Promise<boolean> {
   const result = await db.delete(cities).where(eq(cities.id, id)).returning();
   return result.length > 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Place Curation Queue                                                  */
+/* ------------------------------------------------------------------ */
+
+export type CurationItem = {
+  place_id: string;
+  name: string | null;
+  address: string | null;
+  category: string | null;
+  kid_score: number | null;
+  ai_evidences: unknown;
+  curation_status: CurationStatus;
+  description: string | null;
+  custom_criteria: unknown;
+  ingested_at: Date;
+  updated_at: Date;
+  curated_at: Date | null;
+  city: string;
+  photos: PlacePhoto[];
+};
+
+export async function listCurationQueue(opts: {
+  status?: CurationStatus;
+  city?: string;
+  category?: string;
+  minKidScore?: number;
+  maxKidScore?: number;
+  limit?: number;
+  offset?: number;
+}): Promise<{ items: CurationItem[]; total: number }> {
+  const { status = "pendente", city, category, minKidScore, maxKidScore, limit = 20, offset = 0 } = opts;
+
+  const conditions = [eq(placeKidspotMeta.curation_status, status)];
+  if (city) conditions.push(ilike(placesKidspot.city, `%${city}%`));
+  if (category) conditions.push(ilike(placeKidspotMeta.category, `%${category}%`));
+  if (minKidScore != null) conditions.push(gte(placeKidspotMeta.kid_score, minKidScore));
+  if (maxKidScore != null) conditions.push(lte(placeKidspotMeta.kid_score, maxKidScore));
+
+  const where = and(...conditions);
+
+  const [rows, countResult] = await Promise.all([
+    db
+      .select({
+        place_id: placeKidspotMeta.place_id,
+        name: placeKidspotMeta.name,
+        address: placeKidspotMeta.address,
+        category: placeKidspotMeta.category,
+        kid_score: placeKidspotMeta.kid_score,
+        ai_evidences: placeKidspotMeta.ai_evidences,
+        curation_status: placeKidspotMeta.curation_status,
+        description: placeKidspotMeta.description,
+        custom_criteria: placeKidspotMeta.custom_criteria,
+        ingested_at: placeKidspotMeta.ingested_at,
+        updated_at: placeKidspotMeta.updated_at,
+        curated_at: placeKidspotMeta.curated_at,
+        city: placesKidspot.city,
+      })
+      .from(placeKidspotMeta)
+      .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
+      .where(where)
+      .orderBy(desc(placeKidspotMeta.ingested_at))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(placeKidspotMeta)
+      .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
+      .where(where),
+  ]);
+
+  if (rows.length === 0) return { items: [], total: countResult[0]?.count ?? 0 };
+
+  const placeIds = rows.map((r) => r.place_id);
+  const photos = await db
+    .select()
+    .from(placePhotos)
+    .where(and(inArray(placePhotos.place_id, placeIds), eq(placePhotos.deleted, false)))
+    .orderBy(asc(placePhotos.order));
+
+  const photosByPlace = new Map<string, PlacePhoto[]>();
+  for (const p of photos) {
+    if (!photosByPlace.has(p.place_id)) photosByPlace.set(p.place_id, []);
+    photosByPlace.get(p.place_id)!.push(p);
+  }
+
+  return {
+    items: rows.map((r) => ({ ...r, photos: photosByPlace.get(r.place_id) ?? [] })),
+    total: countResult[0]?.count ?? 0,
+  };
+}
+
+export async function countPendingCuration(): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(placeKidspotMeta)
+    .where(eq(placeKidspotMeta.curation_status, "pendente"));
+  return row?.count ?? 0;
+}
+
+export async function upsertPlaceMeta(data: {
+  place_id: string;
+  name?: string;
+  address?: string;
+  category?: string;
+  kid_score?: number;
+  ai_evidences?: unknown;
+  description?: string;
+  city?: string;
+}): Promise<void> {
+  if (data.city) {
+    await db
+      .insert(placesKidspot)
+      .values({
+        place_id: data.place_id,
+        city: data.city,
+        lat: "0",
+        lng: "0",
+      })
+      .onConflictDoNothing();
+  }
+
+  await db
+    .insert(placeKidspotMeta)
+    .values({
+      place_id: data.place_id,
+      name: data.name ?? null,
+      address: data.address ?? null,
+      category: data.category ?? null,
+      kid_score: data.kid_score ?? null,
+      ai_evidences: data.ai_evidences ?? null,
+      description: data.description ?? null,
+      curation_status: "pendente",
+      ingested_at: new Date(),
+      updated_at: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: placeKidspotMeta.place_id,
+      set: {
+        name: data.name ?? null,
+        address: data.address ?? null,
+        category: data.category ?? null,
+        kid_score: data.kid_score ?? null,
+        ai_evidences: data.ai_evidences ?? null,
+        description: data.description ?? null,
+        updated_at: new Date(),
+      },
+    });
+}
+
+export async function approveCurationItem(
+  placeId: string,
+  curatedBy: string,
+  edits?: { name?: string; description?: string; custom_criteria?: unknown },
+): Promise<void> {
+  const set: Record<string, unknown> = {
+    curation_status: "aprovado",
+    curated_by: curatedBy,
+    curated_at: new Date(),
+    updated_at: new Date(),
+  };
+  if (edits?.name !== undefined) set.name = edits.name;
+  if (edits?.description !== undefined) set.description = edits.description;
+  if (edits?.custom_criteria !== undefined) set.custom_criteria = edits.custom_criteria;
+
+  await db
+    .update(placeKidspotMeta)
+    .set(set)
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function rejectCurationItem(placeId: string, curatedBy: string): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({
+      curation_status: "rejeitado",
+      curated_by: curatedBy,
+      curated_at: new Date(),
+      updated_at: new Date(),
+    })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+/* ------------------------------------------------------------------ */
+/* Place Photos                                                          */
+/* ------------------------------------------------------------------ */
+
+export async function listPlacePhotos(placeId: string): Promise<PlacePhoto[]> {
+  return db
+    .select()
+    .from(placePhotos)
+    .where(and(eq(placePhotos.place_id, placeId), eq(placePhotos.deleted, false)))
+    .orderBy(asc(placePhotos.order));
+}
+
+export async function addPlacePhoto(data: {
+  place_id: string;
+  url: string;
+  photo_reference?: string;
+  order?: number;
+}): Promise<PlacePhoto> {
+  const [photo] = await db
+    .insert(placePhotos)
+    .values({
+      place_id: data.place_id,
+      url: data.url,
+      photo_reference: data.photo_reference ?? null,
+      order: data.order ?? 0,
+      is_cover: false,
+      deleted: false,
+    })
+    .returning();
+  return photo;
+}
+
+export async function setCoverPhoto(placeId: string, photoId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(placePhotos)
+      .set({ is_cover: false })
+      .where(eq(placePhotos.place_id, placeId));
+    await tx
+      .update(placePhotos)
+      .set({ is_cover: true })
+      .where(and(eq(placePhotos.id, photoId), eq(placePhotos.place_id, placeId)));
+  });
+}
+
+export async function deletePlacePhoto(photoId: string): Promise<void> {
+  await db
+    .update(placePhotos)
+    .set({ deleted: true, is_cover: false })
+    .where(eq(placePhotos.id, photoId));
 }

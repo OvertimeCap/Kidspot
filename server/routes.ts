@@ -61,6 +61,15 @@ import {
   updateCity,
   toggleCityActive,
   deleteCity,
+  listCurationQueue,
+  countPendingCuration,
+  upsertPlaceMeta,
+  approveCurationItem,
+  rejectCurationItem,
+  listPlacePhotos,
+  addPlacePhoto,
+  setCoverPhoto,
+  deletePlacePhoto,
 } from "./storage";
 import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
@@ -2499,6 +2508,223 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: (err as Error).message });
     }
   });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Curation Queue (Módulos 5 e 6)                             */
+  /* ------------------------------------------------------------------ */
+
+  async function requireAdminOrCollaborator(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    if (!req.user) { res.status(401).json({ error: "Não autenticado" }); return; }
+    const caller = await getUserById(req.user.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    (req as AuthRequest & { caller: typeof caller }).caller = caller;
+    next();
+  }
+
+  app.get(
+    "/api/admin/curation/queue",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const status = (req.query.status as string) || "pendente";
+      const city = req.query.city as string | undefined;
+      const category = req.query.category as string | undefined;
+      const minKidScore = req.query.min_kid_score ? parseInt(req.query.min_kid_score as string, 10) : undefined;
+      const maxKidScore = req.query.max_kid_score ? parseInt(req.query.max_kid_score as string, 10) : undefined;
+      const limit = Math.min(parseInt((req.query.limit as string) || "20", 10), 100);
+      const offset = parseInt((req.query.offset as string) || "0", 10);
+
+      const validStatuses = ["pendente", "aprovado", "rejeitado"];
+      if (!validStatuses.includes(status)) {
+        res.status(400).json({ error: "status inválido" });
+        return;
+      }
+
+      try {
+        const result = await listCurationQueue({
+          status: status as "pendente" | "aprovado" | "rejeitado",
+          city,
+          category,
+          minKidScore,
+          maxKidScore,
+          limit,
+          offset,
+        });
+        res.json(result);
+      } catch (err) {
+        console.error("Curation queue error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.get(
+    "/api/admin/curation/pending-count",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (_req: AuthRequest, res: Response) => {
+      try {
+        const count = await countPendingCuration();
+        res.json({ count });
+      } catch (err) {
+        console.error("Pending count error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const curationApproveSchema = z.object({
+    name: z.string().optional(),
+    description: z.string().optional(),
+    custom_criteria: z.record(z.unknown()).optional(),
+  });
+
+  app.post(
+    "/api/admin/curation/:placeId/approve",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+      const parsed = curationApproveSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        await approveCurationItem(placeId, req.user!.userId, parsed.data);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Approve curation error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/curation/:placeId/reject",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+
+      try {
+        await rejectCurationItem(placeId, req.user!.userId);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Reject curation error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const ingestPlaceSchema = z.object({
+    place_id: z.string().min(1),
+    name: z.string().optional(),
+    address: z.string().optional(),
+    category: z.string().optional(),
+    city: z.string().optional(),
+    kid_score: z.number().int().min(0).max(100).optional(),
+    ai_evidences: z.array(z.string()).optional(),
+    description: z.string().optional(),
+    photos: z.array(z.object({
+      url: z.string().url(),
+      photo_reference: z.string().optional(),
+      order: z.number().int().optional(),
+    })).optional(),
+  });
+
+  app.post(
+    "/api/admin/curation/ingest",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = ingestPlaceSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        const { place_id, photos, ...meta } = parsed.data;
+        await upsertPlaceMeta({ place_id, ...meta });
+
+        if (photos && photos.length > 0) {
+          for (const p of photos) {
+            await addPlacePhoto({ place_id, ...p });
+          }
+        }
+
+        res.status(201).json({ ok: true });
+      } catch (err) {
+        console.error("Ingest place error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Place Photos                                                 */
+  /* ------------------------------------------------------------------ */
+
+  app.get(
+    "/api/admin/curation/:placeId/photos",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+      try {
+        const photos = await listPlacePhotos(placeId);
+        res.json({ photos });
+      } catch (err) {
+        console.error("List photos error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/photos/:photoId/cover",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const photoId = req.params.photoId as string;
+      const placeId = req.body.place_id as string;
+
+      if (!placeId) {
+        res.status(400).json({ error: "place_id is required" });
+        return;
+      }
+
+      try {
+        await setCoverPhoto(placeId, photoId);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Set cover error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/photos/:photoId",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const photoId = req.params.photoId as string;
+
+      try {
+        await deletePlacePhoto(photoId);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Delete photo error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
 
   const httpServer = createServer(app);
   return httpServer;

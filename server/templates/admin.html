@@ -869,6 +869,12 @@
             <span class="nav-icon">🏙️</span> Gestão de Cidades
           </button>
 
+          <div class="sidebar-section-label">Curadoria</div>
+          <button class="nav-item" data-page="curadoria">
+            <span class="nav-icon">🔍</span> Fila de Curadoria
+            <span class="nav-badge" id="curadoria-badge" style="display:none">0</span>
+          </button>
+
           <div class="sidebar-section-label">Conteúdo</div>
           <button class="nav-item" data-page="locais">
             <span class="nav-icon">📍</span> Locais
@@ -941,6 +947,7 @@
         criterios:  'Critérios Customizados',
         filtros:    'Filtros do App',
         cidades:    'Gestão de Cidades',
+        curadoria:  'Fila de Curadoria',
         locais:     'Locais',
         stories:    'Stories',
         parceiros:  'Parceiros',
@@ -969,6 +976,7 @@
       const pageContent     = document.getElementById('page-content');
       const navItems        = document.querySelectorAll('.nav-item[data-page]');
       const feedbackBadge   = document.getElementById('feedback-badge');
+      const curadoriaBadge  = document.getElementById('curadoria-badge');
 
       // ===== MODAL =====
       const modalOverlay = document.getElementById('modal-overlay');
@@ -1070,6 +1078,7 @@
           case 'criterios': renderCriterios(); break;
           case 'filtros':   renderFiltros(); break;
           case 'cidades':   renderCidades(); break;
+          case 'curadoria': renderCuradoria(); break;
           default:          renderPlaceholder(page); break;
         }
       }
@@ -1086,6 +1095,7 @@
           { id: 'criterios', icon: '🏷️', title: 'Critérios Customizados',  desc: 'Atributos extras para curadoria' },
           { id: 'filtros',   icon: '🔎', title: 'Filtros do App',          desc: 'Filtros exibidos para os usuários' },
           { id: 'cidades',   icon: '🏙️', title: 'Gestão de Cidades',       desc: 'Cidades escaneadas pela IA' },
+          { id: 'curadoria', icon: '🔍', title: 'Fila de Curadoria',       desc: 'Revisar e aprovar lugares antes de publicar' },
           { id: 'locais',    icon: '📍', title: 'Locais',                  desc: 'Em desenvolvimento' },
           { id: 'stories',   icon: '📸', title: 'Stories',                 desc: 'Em desenvolvimento' },
           { id: 'parceiros', icon: '🤝', title: 'Parceiros',               desc: 'Em desenvolvimento' },
@@ -2658,6 +2668,357 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
       }
 
       // =====================================================================
+      // ===== MÓDULO: FILA DE CURADORIA (Módulos 5 e 6) =====================
+      // =====================================================================
+      let curationStatusFilter = 'pendente';
+      let curationCityFilter   = '';
+      let curationCatFilter    = '';
+      let curationMinScore     = '';
+      let curationMaxScore     = '';
+      let curationOffset       = 0;
+      const CURATION_LIMIT     = 10;
+
+      async function renderCuradoria() {
+        pageContent.innerHTML = `
+          <div class="mod-header">
+            <h2>🔍 Fila de Curadoria</h2>
+          </div>
+          <div class="tabs-row" id="curation-tabs">
+            <button class="tab-btn ${curationStatusFilter==='pendente'?'active':''}" data-cstatus="pendente">⏳ Pendentes <span id="pending-count-tab"></span></button>
+            <button class="tab-btn ${curationStatusFilter==='aprovado'?'active':''}" data-cstatus="aprovado">✅ Aprovados</button>
+            <button class="tab-btn ${curationStatusFilter==='rejeitado'?'active':''}" data-cstatus="rejeitado">❌ Rejeitados</button>
+          </div>
+
+          <div class="search-bar" style="flex-wrap:wrap;gap:8px;margin-bottom:16px">
+            <input class="search-input" id="c-city" placeholder="Filtrar por cidade…" value="${escHtml(curationCityFilter)}" style="min-width:150px;flex:1" />
+            <input class="search-input" id="c-cat" placeholder="Categoria…" value="${escHtml(curationCatFilter)}" style="min-width:130px;flex:1" />
+            <input class="search-input" id="c-min" placeholder="KidScore mín" value="${escHtml(curationMinScore)}" style="min-width:120px;max-width:140px" type="number" min="0" max="100" />
+            <input class="search-input" id="c-max" placeholder="KidScore máx" value="${escHtml(curationMaxScore)}" style="min-width:120px;max-width:140px" type="number" min="0" max="100" />
+            <button class="btn btn-orange" id="c-filter-btn">Filtrar</button>
+            <button class="btn btn-gray"   id="c-reset-btn">Limpar</button>
+          </div>
+
+          <div id="curation-list"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+          <div id="curation-pagination" style="display:flex;gap:8px;justify-content:center;margin-top:16px"></div>
+        `;
+
+        pageContent.querySelectorAll('.tab-btn[data-cstatus]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            curationStatusFilter = btn.dataset.cstatus;
+            curationOffset = 0;
+            pageContent.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            loadCurationList();
+          });
+        });
+
+        document.getElementById('c-filter-btn').addEventListener('click', () => {
+          curationCityFilter  = document.getElementById('c-city').value.trim();
+          curationCatFilter   = document.getElementById('c-cat').value.trim();
+          curationMinScore    = document.getElementById('c-min').value.trim();
+          curationMaxScore    = document.getElementById('c-max').value.trim();
+          curationOffset      = 0;
+          loadCurationList();
+        });
+
+        document.getElementById('c-reset-btn').addEventListener('click', () => {
+          curationCityFilter = curationCatFilter = curationMinScore = curationMaxScore = '';
+          curationOffset = 0;
+          document.getElementById('c-city').value = '';
+          document.getElementById('c-cat').value  = '';
+          document.getElementById('c-min').value  = '';
+          document.getElementById('c-max').value  = '';
+          loadCurationList();
+        });
+
+        loadCurationList();
+      }
+
+      async function loadCurationList() {
+        const listEl = document.getElementById('curation-list');
+        const pagEl  = document.getElementById('curation-pagination');
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+        if (pagEl) pagEl.innerHTML = '';
+
+        const params = new URLSearchParams({ status: curationStatusFilter, limit: CURATION_LIMIT, offset: curationOffset });
+        if (curationCityFilter) params.set('city', curationCityFilter);
+        if (curationCatFilter)  params.set('category', curationCatFilter);
+        if (curationMinScore)   params.set('min_kid_score', curationMinScore);
+        if (curationMaxScore)   params.set('max_kid_score', curationMaxScore);
+
+        try {
+          const res  = await apiFetch('/admin/curation/queue?' + params.toString());
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Erro');
+
+          renderCurationList(data.items || [], data.total || 0);
+        } catch(e) {
+          listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
+        }
+      }
+
+      function renderCurationList(items, total) {
+        const listEl = document.getElementById('curation-list');
+        const pagEl  = document.getElementById('curation-pagination');
+        if (!listEl) return;
+
+        const pendingTab = document.getElementById('pending-count-tab');
+        if (pendingTab && curationStatusFilter === 'pendente') {
+          pendingTab.textContent = total > 0 ? ` (${total})` : '';
+        }
+
+        if (items.length === 0) {
+          listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔍</div><p>Nenhum lugar ${curationStatusFilter === 'pendente' ? 'pendente' : curationStatusFilter === 'aprovado' ? 'aprovado' : 'rejeitado'} encontrado.</p></div>`;
+          return;
+        }
+
+        const isPending  = curationStatusFilter === 'pendente';
+        const isAnalista = adminUser?.role === 'analista';
+
+        listEl.innerHTML = items.map(item => {
+          const score     = item.kid_score ?? null;
+          const scoreColor = score === null ? '#9ca3af' : score >= 70 ? '#059669' : score >= 40 ? '#D97706' : '#DC2626';
+          const evidences  = Array.isArray(item.ai_evidences) ? item.ai_evidences : [];
+          const photos     = item.photos || [];
+          const coverPhoto = photos.find(p => p.is_cover) || photos[0] || null;
+
+          return `
+            <div class="card" style="margin-bottom:16px" data-place-id="${escHtml(item.place_id)}">
+              <div style="display:flex;gap:16px;align-items:flex-start">
+                <!-- Photo thumbnail -->
+                <div style="width:80px;height:80px;flex-shrink:0;border-radius:10px;overflow:hidden;background:#f3f4f6;display:flex;align-items:center;justify-content:center">
+                  ${coverPhoto
+                    ? `<img src="${escHtml(coverPhoto.url)}" alt="foto" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`
+                    : `<span style="font-size:28px">🏪</span>`
+                  }
+                </div>
+                <!-- Info -->
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                    <span style="font-size:15px;font-weight:700">${escHtml(item.name || item.place_id)}</span>
+                    ${item.category ? `<span class="badge" style="background:#e0f2fe;color:#0369a1">${escHtml(item.category)}</span>` : ''}
+                    ${score !== null ? `<span class="badge" style="background:${scoreColor}18;color:${scoreColor}">KidScore ${score}</span>` : ''}
+                  </div>
+                  ${item.address ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">📍 ${escHtml(item.address)}</div>` : ''}
+                  ${item.city ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">🏙️ ${escHtml(item.city)}</div>` : ''}
+                  <div style="font-size:11px;color:var(--text-muted)">Ingestão: ${new Date(item.ingested_at).toLocaleDateString('pt-BR')}</div>
+                </div>
+              </div>
+
+              <!-- AI Evidences (keywords highlighted) -->
+              ${evidences.length > 0 ? `
+                <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">EVIDÊNCIAS KIDS-FRIENDLY</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px">
+                    ${evidences.map(ev => `<span class="badge" style="background:#fef3c7;color:#92400e;font-size:12px">⭐ ${escHtml(String(ev))}</span>`).join('')}
+                  </div>
+                </div>
+              ` : ''}
+
+              <!-- Description -->
+              ${item.description ? `
+                <div style="margin-top:10px;font-size:13px;color:var(--text);background:var(--bg);border-radius:8px;padding:10px 12px;line-height:1.5">${escHtml(item.description)}</div>
+              ` : ''}
+
+              <!-- Photos grid -->
+              ${photos.length > 0 ? `
+                <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">FOTOS (${photos.length})</div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap" class="photos-grid" data-place-id="${escHtml(item.place_id)}">
+                    ${photos.map(p => `
+                      <div style="position:relative;width:72px;height:72px;border-radius:8px;overflow:hidden;border:2px solid ${p.is_cover ? 'var(--primary)' : 'var(--border)'}">
+                        <img src="${escHtml(p.url)}" alt="foto" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'">
+                        ${!isAnalista ? `
+                          <div style="position:absolute;inset:0;background:rgba(0,0,0,0.4);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;opacity:0;transition:opacity 0.15s" class="photo-actions">
+                            ${!p.is_cover && isPending ? `<button class="btn btn-sm" style="background:rgba(255,255,255,0.9);color:#d97706;padding:3px 7px;font-size:10px" data-pid="${escHtml(p.id)}" data-place="${escHtml(item.place_id)}" title="Definir capa">★</button>` : ''}
+                            ${isPending ? `<button class="btn btn-sm" style="background:rgba(220,38,38,0.85);color:#fff;padding:3px 7px;font-size:10px" data-pid="${escHtml(p.id)}" title="Excluir" class="del-photo-btn">✕</button>` : ''}
+                          </div>
+                        ` : ''}
+                        ${p.is_cover ? `<span style="position:absolute;top:3px;right:3px;font-size:11px;background:var(--primary);color:#fff;border-radius:4px;padding:1px 4px">capa</span>` : ''}
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+
+              <!-- Action buttons -->
+              ${isPending && !isAnalista ? `
+                <div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);flex-wrap:wrap">
+                  <button class="btn btn-red btn-sm reject-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✕ Rejeitar</button>
+                  <button class="btn btn-orange btn-sm edit-approve-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}" data-desc="${escHtml(item.description||'')}" style="margin-left:auto">✏️ Editar e Aprovar</button>
+                  <button class="btn btn-green btn-sm approve-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✓ Aprovar</button>
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }).join('');
+
+        // Photo hover effects
+        listEl.querySelectorAll('.photos-grid .photo-actions').forEach(el => {
+          const wrap = el.parentElement;
+          wrap.addEventListener('mouseenter', () => el.style.opacity = '1');
+          wrap.addEventListener('mouseleave', () => el.style.opacity = '0');
+        });
+
+        // Set cover photo
+        listEl.querySelectorAll('[data-pid][data-place]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const pid    = btn.dataset.pid;
+            const placeId = btn.dataset.place;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/photos/${pid}/cover`, { method: 'PATCH', body: JSON.stringify({ place_id: placeId }) });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Delete photo buttons
+        listEl.querySelectorAll('[data-pid]:not([data-place])').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm('Excluir esta foto?')) return;
+            const pid = btn.dataset.pid;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/photos/${pid}`, { method: 'DELETE' });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Quick approve
+        listEl.querySelectorAll('.approve-place-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id   = btn.dataset.id;
+            const name = btn.dataset.name;
+            if (!confirm(`Aprovar "${name}"?`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/curation/${id}/approve`, { method: 'POST', body: JSON.stringify({}) });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+              loadCuradoriaBadge();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Reject
+        listEl.querySelectorAll('.reject-place-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id   = btn.dataset.id;
+            const name = btn.dataset.name;
+            if (!confirm(`Rejeitar "${name}"? O lugar não será publicado no app.`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/curation/${id}/reject`, { method: 'POST', body: JSON.stringify({}) });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+              loadCuradoriaBadge();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Edit & Approve modal
+        listEl.querySelectorAll('.edit-approve-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id   = btn.dataset.id;
+            const name = btn.dataset.name;
+            const desc = btn.dataset.desc;
+            openCurationEditModal(id, name, desc);
+          });
+        });
+
+        // Pagination
+        if (pagEl) {
+          const totalPages = Math.ceil(total / CURATION_LIMIT);
+          const currentPage = Math.floor(curationOffset / CURATION_LIMIT);
+          if (totalPages > 1) {
+            pagEl.innerHTML = `
+              <button class="btn btn-gray btn-sm" id="pag-prev" ${currentPage === 0 ? 'disabled' : ''}>← Anterior</button>
+              <span style="font-size:13px;color:var(--text-muted);line-height:2">Página ${currentPage+1} de ${totalPages} (${total} total)</span>
+              <button class="btn btn-gray btn-sm" id="pag-next" ${currentPage >= totalPages-1 ? 'disabled' : ''}>Próxima →</button>
+            `;
+            document.getElementById('pag-prev')?.addEventListener('click', () => {
+              curationOffset = Math.max(0, curationOffset - CURATION_LIMIT);
+              loadCurationList();
+            });
+            document.getElementById('pag-next')?.addEventListener('click', () => {
+              curationOffset += CURATION_LIMIT;
+              loadCurationList();
+            });
+          }
+        }
+      }
+
+      function openCurationEditModal(placeId, placeName, desc) {
+        openModal(
+          `Editar e Aprovar — ${placeName}`,
+          `
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Edite os dados antes de publicar este lugar no app.</p>
+            <div class="field-group">
+              <label class="field-label">Nome do lugar</label>
+              <input class="field-input" id="edit-name" value="${escHtml(placeName)}" placeholder="Nome do estabelecimento" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Descrição kids-friendly</label>
+              <textarea class="field-input" id="edit-desc" rows="4" placeholder="Descreva por que é adequado para famílias com crianças…">${escHtml(desc)}</textarea>
+            </div>
+          `,
+          `
+            <button class="btn btn-gray" id="ea-cancel">Cancelar</button>
+            <button class="btn btn-green" id="ea-save">✓ Aprovar com edição</button>
+          `,
+          false,
+        );
+
+        document.getElementById('ea-cancel').addEventListener('click', closeModal);
+
+        document.getElementById('ea-save').addEventListener('click', async () => {
+          const name = document.getElementById('edit-name').value.trim();
+          const description = document.getElementById('edit-desc').value.trim();
+          if (!name) { alert('Nome é obrigatório.'); return; }
+
+          const saveBtn = document.getElementById('ea-save');
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Aprovando…';
+
+          try {
+            const body = {};
+            if (name) body.name = name;
+            if (description) body.description = description;
+            const res = await apiFetch(`/admin/curation/${placeId}/approve`, {
+              method: 'POST',
+              body: JSON.stringify(body),
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+            closeModal();
+            loadCurationList();
+            loadCuradoriaBadge();
+          } catch(e) {
+            alert('Erro: ' + e.message);
+            saveBtn.disabled = false;
+            saveBtn.textContent = '✓ Aprovar com edição';
+          }
+        });
+      }
+
+      async function loadCuradoriaBadge() {
+        try {
+          const res  = await apiFetch('/admin/curation/pending-count');
+          const data = await res.json();
+          if (res.ok && data.count > 0) {
+            curadoriaBadge.textContent = data.count;
+            curadoriaBadge.style.display = '';
+          } else {
+            curadoriaBadge.style.display = 'none';
+          }
+        } catch {}
+      }
+
+      // =====================================================================
       // ===== SHELL / LOGIN TOGGLE ===========================================
       // =====================================================================
       function enterShell() {
@@ -2675,6 +3036,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
 
         navigateTo('dashboard');
         loadFeedbackBadge();
+        loadCuradoriaBadge();
       }
 
       function showLogin() {
