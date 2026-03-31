@@ -2387,12 +2387,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             inserted++;
           }
         }
-        if (inserted > 0) {
-          await db
-            .update(cities)
-            .set({ ultima_varredura: new Date() })
-            .where(eq(cities.id, parsed.data.city_id));
-        }
         res.json({ inserted });
       } catch (err) {
         console.error("Pipeline triage error:", err);

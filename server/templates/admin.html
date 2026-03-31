@@ -2803,6 +2803,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
               <h3 style="margin:0;font-size:16px">📋 Resultados do Pipeline (${places.length} encontrados, ${newPlaces.length} novos)</h3>
               <div style="display:flex;gap:8px">
                 <button class="btn btn-sm" id="preview-approve-all" style="background:var(--primary);color:#fff">✅ Pré-aprovar Novos (${newPlaces.length})</button>
+                <button class="btn btn-sm btn-gray" id="preview-neutral-all">⏸️ Neutralizar Todos</button>
                 <button class="btn btn-sm btn-gray" id="preview-dismiss">✖ Fechar</button>
               </div>
             </div>
@@ -2814,6 +2815,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                     <thead>
                       <tr style="border-bottom:2px solid var(--border);text-align:left">
                         <th style="padding:8px">Nome</th>
+                        <th style="padding:8px">Endereço</th>
                         <th style="padding:8px">Tipo</th>
                         <th style="padding:8px">Nota</th>
                         <th style="padding:8px">Reviews</th>
@@ -2825,7 +2827,8 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                     <tbody>
                       ${places.map((p, i) => `
                         <tr style="border-bottom:1px solid var(--border)" id="preview-row-${i}" data-idx="${i}">
-                          <td style="padding:8px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(p.formatted_address)}">${escHtml(p.name)}</td>
+                          <td style="padding:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(p.formatted_address)}">${escHtml(p.name)}</td>
+                          <td style="padding:8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)" title="${escHtml(p.formatted_address)}">${escHtml(p.formatted_address || '')}</td>
                           <td style="padding:8px"><span style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:11px">${escHtml(getTypeLabel(p.types))}</span></td>
                           <td style="padding:8px">${p.rating ? '⭐ ' + p.rating.toFixed(1) : '—'}</td>
                           <td style="padding:8px">${p.user_ratings_total || 0}</td>
@@ -2879,6 +2882,17 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           alert(`${totalInserted} lugar(es) enviado(s) para curadoria.`);
           container.innerHTML = '';
           renderCidades();
+        });
+
+        document.getElementById('preview-neutral-all')?.addEventListener('click', () => {
+          container.querySelectorAll('[data-preview-neutral]').forEach(nbtn => {
+            const idx = parseInt(nbtn.dataset.previewNeutral);
+            const row = document.getElementById('preview-row-' + idx);
+            if (row && row.style.display !== 'none') {
+              row.style.display = 'none';
+            }
+          });
+          alert('Todos os itens foram neutralizados (ignorados nesta rodada).');
         });
 
         container.querySelectorAll('[data-preview-approve]').forEach(btn => {

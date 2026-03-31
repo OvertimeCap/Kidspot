@@ -181,6 +181,11 @@ export async function previewPipelineForCity(
     : [];
   const existingSet = new Set(existingRows.map((r) => r.place_id));
 
+  await db
+    .update(cities)
+    .set({ ultima_varredura: new Date() })
+    .where(eq(cities.id, cityId));
+
   return {
     city_name: city.nome,
     places: limited.map((p) => ({
