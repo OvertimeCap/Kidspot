@@ -622,6 +622,60 @@ export type GeocodeResult = {
   label: string;
 };
 
+export type CityGeocodeResult = {
+  nome: string;
+  estado: string;
+  latitude: number;
+  longitude: number;
+};
+
+/**
+ * geocodeCityPlace
+ *
+ * Resolves a Google Places place_id to city name, state UF, and coordinates.
+ * Uses address_components to extract the locality name and state short_name.
+ */
+export async function geocodeCityPlace(placeId: string): Promise<CityGeocodeResult> {
+  if (!GOOGLE_PLACES_API_KEY) throw new Error("API key not configured");
+
+  const qs = new URLSearchParams({
+    place_id: placeId,
+    fields: "address_components,geometry",
+    key: GOOGLE_PLACES_API_KEY,
+    language: "pt-BR",
+  });
+
+  const res = await fetchWithTimeout(`${PLACES_BASE}/details/json?${qs.toString()}`, "geocodeCityPlace");
+  if (!res.ok) throw new Error(`Geocode request failed: ${res.status}`);
+
+  const data = (await res.json()) as {
+    result: {
+      address_components?: { long_name: string; short_name: string; types: string[] }[];
+      geometry?: { location: { lat: number; lng: number } };
+    };
+    status: string;
+  };
+
+  if (data.status !== "OK") throw new Error(`Geocode status: ${data.status}`);
+
+  const loc = data.result.geometry?.location;
+  if (!loc) throw new Error("No geometry in geocode result");
+
+  const components = data.result.address_components ?? [];
+  const localityComp = components.find(c => c.types.includes("locality") || c.types.includes("administrative_area_level_2"));
+  const stateComp = components.find(c => c.types.includes("administrative_area_level_1"));
+
+  if (!localityComp) throw new Error("Could not extract city name from address components");
+  if (!stateComp) throw new Error("Could not extract state from address components");
+
+  return {
+    nome: localityComp.long_name,
+    estado: stateComp.short_name,
+    latitude: loc.lat,
+    longitude: loc.lng,
+  };
+}
+
 /**
  * geocodePlace
  *

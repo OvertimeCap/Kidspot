@@ -742,6 +742,25 @@
 
       textarea.field-input { resize: vertical; min-height: 120px; line-height: 1.5; }
 
+      .ac-wrap { position: relative; }
+      .ac-dropdown {
+        position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 9999;
+        background: var(--surface); border: 1.5px solid var(--border); border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12); overflow: hidden; max-height: 220px; overflow-y: auto;
+      }
+      .ac-item {
+        padding: 10px 14px; font-size: 14px; color: var(--text); cursor: pointer;
+        transition: background 0.1s;
+      }
+      .ac-item:hover, .ac-item.active { background: var(--primary-light, rgba(255,107,51,0.08)); }
+      .ac-item + .ac-item { border-top: 1px solid var(--border); }
+      .ac-loading { padding: 10px 14px; font-size: 13px; color: var(--text-muted); }
+      .ac-selected-badge {
+        display: inline-flex; align-items: center; gap: 6px; margin-top: 6px;
+        font-size: 12px; color: var(--primary); background: rgba(255,107,51,0.08);
+        padding: 3px 10px; border-radius: 100px;
+      }
+
       .field-row { display: flex; gap: 12px; }
       .field-row .field-group { flex: 1; }
 
@@ -2574,27 +2593,34 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         document.getElementById('new-cidade-btn')?.addEventListener('click', () => openCidadeModal(null));
       }
 
-      function openCidadeModal(city) {
+      async function openCidadeModal(city) {
         const isNew = !city;
+
+        // Determine the initial prompt text to show
+        // For existing cities: use system_prompt from parametros_prompt if present
+        // For new cities: fetch the global active system prompt
+        let initialPrompt = '';
+        if (city && city.parametros_prompt && city.parametros_prompt.system_prompt) {
+          initialPrompt = city.parametros_prompt.system_prompt;
+        } else {
+          try {
+            const pr = await apiFetch('/admin/cities/active-prompt');
+            const pd = await pr.json();
+            initialPrompt = pd.prompt || '';
+          } catch(e) { initialPrompt = ''; }
+        }
+
         openModal(isNew ? 'Nova Cidade' : 'Editar Cidade', `
-          <div class="field-row">
-            <div class="field-group">
-              <label class="field-label">Nome da cidade *</label>
-              <input class="field-input" id="cid-nome" value="${city?escHtml(city.nome):''}" placeholder="São Paulo" />
+          <div class="field-group">
+            <label class="field-label">Cidade *</label>
+            <div class="ac-wrap">
+              <input class="field-input" id="cid-search" autocomplete="off"
+                value="${city ? escHtml(city.nome) + (city.estado ? ', ' + escHtml(city.estado) : '') : ''}"
+                placeholder="Digite o nome da cidade…" />
+              <div class="ac-dropdown" id="cid-dropdown" style="display:none"></div>
             </div>
-            <div class="field-group">
-              <label class="field-label">Estado (UF) *</label>
-              <input class="field-input" id="cid-estado" value="${city?escHtml(city.estado):''}" placeholder="SP" maxlength="2" style="text-transform:uppercase" />
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field-group">
-              <label class="field-label">Latitude</label>
-              <input class="field-input" id="cid-lat" value="${city?escHtml(city.latitude):''}" placeholder="-23.5505" />
-            </div>
-            <div class="field-group">
-              <label class="field-label">Longitude</label>
-              <input class="field-input" id="cid-lng" value="${city?escHtml(city.longitude):''}" placeholder="-46.6333" />
+            <div id="cid-selected-info" style="display:${city?'block':'none'}">
+              <span class="ac-selected-badge">✓ ${city ? escHtml(city.nome) + ' — ' + escHtml(city.estado) : ''}</span>
             </div>
           </div>
           <div class="field-row">
@@ -2621,17 +2647,30 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             </div>
           </div>
           <div class="field-group">
-            <label class="field-label">Parâmetros do prompt (JSON)</label>
-            <textarea class="field-input" id="cid-params" rows="3" placeholder='{"bairros":["Centro","Pinheiros"]}'>${city&&city.parametros_prompt?JSON.stringify(city.parametros_prompt,null,2):''}</textarea>
-            <p class="field-sub">Opcional. Parâmetros adicionais para personalizar o prompt de IA nesta cidade.</p>
+            <label class="field-label">Prompt desta cidade</label>
+            <textarea class="field-input" id="cid-prompt" rows="8" placeholder="Prompt de IA personalizado para esta cidade…"></textarea>
+            <p class="field-sub">Pré-preenchido com o System Prompt global. Edite para personalizar a busca nesta cidade.</p>
           </div>
         `, `
           <button class="btn btn-gray" id="cid-cancel">Cancelar</button>
           <button class="btn btn-orange" id="cid-save">Salvar</button>
         `, true);
 
-        let selectedFreq = city ? city.frequencia : 'semanal';
+        // Set prompt value programmatically to avoid template literal escaping issues
+        document.getElementById('cid-prompt').value = initialPrompt;
 
+        // State for the selected city from autocomplete
+        let resolvedCity = city ? {
+          nome: city.nome,
+          estado: city.estado,
+          latitude: city.latitude,
+          longitude: city.longitude,
+        } : null;
+
+        let selectedFreq = city ? city.frequencia : 'semanal';
+        let acTimer = null;
+
+        // Frequency pills
         document.querySelectorAll('#cid-freq-pills .pill').forEach(p => {
           p.addEventListener('click', () => {
             selectedFreq = p.dataset.freq;
@@ -2640,30 +2679,100 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           });
         });
 
+        // Autocomplete logic
+        const searchInput = document.getElementById('cid-search');
+        const dropdown = document.getElementById('cid-dropdown');
+        const selectedInfo = document.getElementById('cid-selected-info');
+
+        function closeDropdown() {
+          dropdown.style.display = 'none';
+          dropdown.innerHTML = '';
+        }
+
+        function showDropdown(items) {
+          if (!items.length) { closeDropdown(); return; }
+          dropdown.innerHTML = items.map((s, i) =>
+            `<div class="ac-item" data-idx="${i}" data-place-id="${escHtml(s.place_id)}" data-desc="${escHtml(s.description)}">${escHtml(s.description)}</div>`
+          ).join('');
+          dropdown.style.display = 'block';
+
+          dropdown.querySelectorAll('.ac-item').forEach(el => {
+            el.addEventListener('mousedown', async (e) => {
+              e.preventDefault();
+              const placeId = el.dataset.placeId;
+              const desc = el.dataset.desc;
+              closeDropdown();
+              searchInput.value = desc;
+              searchInput.disabled = true;
+              selectedInfo.innerHTML = '<span class="ac-loading">Obtendo coordenadas…</span>';
+              selectedInfo.style.display = 'block';
+              try {
+                const gr = await apiFetch(`/admin/cities/geocode?place_id=${encodeURIComponent(placeId)}`);
+                const gd = await gr.json();
+                if (!gr.ok) throw new Error(gd.error || 'Erro no geocode');
+                resolvedCity = gd;
+                searchInput.value = gd.nome + ', ' + gd.estado;
+                selectedInfo.innerHTML = `<span class="ac-selected-badge">✓ ${escHtml(gd.nome)} — ${escHtml(gd.estado)}</span>`;
+              } catch(e) {
+                selectedInfo.innerHTML = `<span style="color:var(--danger,#e53e3e);font-size:12px">Erro: ${escHtml(e.message)}</span>`;
+                resolvedCity = null;
+              } finally {
+                searchInput.disabled = false;
+              }
+            });
+          });
+        }
+
+        searchInput.addEventListener('input', () => {
+          resolvedCity = null;
+          selectedInfo.style.display = 'none';
+          clearTimeout(acTimer);
+          const q = searchInput.value.trim();
+          if (q.length < 2) { closeDropdown(); return; }
+          dropdown.innerHTML = '<div class="ac-loading">Buscando…</div>';
+          dropdown.style.display = 'block';
+          acTimer = setTimeout(async () => {
+            try {
+              const r = await apiFetch(`/places/autocomplete?input=${encodeURIComponent(q)}`);
+              const d = await r.json();
+              showDropdown(d.suggestions || []);
+            } catch { closeDropdown(); }
+          }, 300);
+        });
+
+        searchInput.addEventListener('blur', () => {
+          setTimeout(closeDropdown, 150);
+        });
+
         document.getElementById('cid-cancel').addEventListener('click', closeModal);
 
         document.getElementById('cid-save').addEventListener('click', async () => {
-          const nome   = document.getElementById('cid-nome').value.trim();
-          const estado = document.getElementById('cid-estado').value.trim().toUpperCase();
-          const lat    = document.getElementById('cid-lat').value.trim();
-          const lng    = document.getElementById('cid-lng').value.trim();
+          // For new cities, a selection via autocomplete is required
+          if (isNew && !resolvedCity) {
+            alert('Selecione uma cidade válida na lista de sugestões.');
+            return;
+          }
+
+          const nome   = resolvedCity ? resolvedCity.nome   : city.nome;
+          const estado = resolvedCity ? resolvedCity.estado : city.estado;
+          const lat    = resolvedCity ? resolvedCity.latitude  : (city.latitude  != null ? parseFloat(city.latitude)  : null);
+          const lng    = resolvedCity ? resolvedCity.longitude : (city.longitude != null ? parseFloat(city.longitude) : null);
           const raio   = parseInt(document.getElementById('cid-raio').value, 10);
           const ativa  = document.getElementById('cid-ativa').checked;
-          const paramsRaw = document.getElementById('cid-params').value.trim();
+          const promptText = document.getElementById('cid-prompt').value.trim();
 
           if (!nome || !estado) { alert('Nome e estado são obrigatórios.'); return; }
 
-          let parametros_prompt = null;
-          if (paramsRaw) {
-            try { parametros_prompt = JSON.parse(paramsRaw); } catch { alert('JSON de parâmetros inválido.'); return; }
+          // Build parametros_prompt preserving any existing keys, overriding system_prompt
+          let parametros_prompt = city && city.parametros_prompt ? { ...city.parametros_prompt } : {};
+          if (promptText) {
+            parametros_prompt.system_prompt = promptText;
+          } else {
+            delete parametros_prompt.system_prompt;
           }
+          if (!Object.keys(parametros_prompt).length) parametros_prompt = null;
 
-          const parsedLat = lat ? parseFloat(lat) : null;
-          const parsedLng = lng ? parseFloat(lng) : null;
-          if (lat && isNaN(parsedLat)) { alert('Latitude deve ser um número válido.'); return; }
-          if (lng && isNaN(parsedLng)) { alert('Longitude deve ser um número válido.'); return; }
-
-          const body = { nome, estado, latitude: parsedLat, longitude: parsedLng, raio_km: raio||20, frequencia: selectedFreq, ativa, parametros_prompt };
+          const body = { nome, estado, latitude: lat, longitude: lng, raio_km: raio||20, frequencia: selectedFreq, ativa, parametros_prompt };
 
           const saveBtn = document.getElementById('cid-save');
           saveBtn.disabled = true;

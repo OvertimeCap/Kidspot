@@ -2,7 +2,7 @@ import type { Express, Response, NextFunction } from "express";
 import { createServer, type Server } from "node:http";
 import { z } from "zod";
 import { pool, db } from "./db";
-import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace } from "./google-places";
+import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace, geocodeCityPlace } from "./google-places";
 import { sendInviteEmail } from "./email";
 import { runPipelineForCity, runPipelineForAllCities } from "./pipeline";
 import { encryptApiKey, decryptApiKey, maskApiKey } from "./ai-crypto";
@@ -2101,6 +2101,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ------------------------------------------------------------------ */
 
   const updateCitySchema = insertCitySchema.partial();
+
+  app.get("/api/admin/cities/geocode", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    const placeId = req.query.place_id as string;
+    if (!placeId) {
+      res.status(400).json({ error: "place_id é obrigatório" });
+      return;
+    }
+    try {
+      const result = await geocodeCityPlace(placeId);
+      res.json(result);
+    } catch (err) {
+      console.error("City geocode error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/admin/cities/active-prompt", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
+    try {
+      const active = await db.query.aiPrompts.findFirst({
+        where: eq(aiPrompts.is_active, true),
+        orderBy: (t, { desc }) => [desc(t.updated_at)],
+      });
+      res.json({ prompt: active?.prompt ?? null });
+    } catch (err) {
+      console.error("Active prompt fetch error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
 
   app.get("/api/admin/cities", requireAuth, async (req: AuthRequest, res: Response) => {
     const caller = await getUserById(req.user!.userId);
