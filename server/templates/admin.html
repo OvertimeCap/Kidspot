@@ -1899,7 +1899,24 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         if (isAdmin && editor) {
           editor.addEventListener('input', () => {
             promptDraft = editor.value;
-            renderPromptsUI(prompt);
+            const originalText = prompt?.prompt || '';
+            const isDirty = promptDraft !== originalText;
+
+            let dirtyBar = document.getElementById('dirty-bar');
+            if (isDirty && !dirtyBar) {
+              dirtyBar = document.createElement('div');
+              dirtyBar.className = 'warn-bar';
+              dirtyBar.id = 'dirty-bar';
+              dirtyBar.innerHTML = '✏️ Alterações não salvas <button class="btn btn-sm btn-gray" id="discard-prompt" style="margin-left:auto">Descartar</button><button class="btn btn-sm btn-orange" id="save-prompt">Salvar Prompt</button>';
+              editor.closest('.card').insertAdjacentElement('beforebegin', dirtyBar);
+              document.getElementById('discard-prompt')?.addEventListener('click', () => { promptDraft = null; renderPromptsUI(prompt); });
+              document.getElementById('save-prompt')?.addEventListener('click', doSave);
+            } else if (!isDirty && dirtyBar) {
+              dirtyBar.remove();
+            }
+
+            const inlineBtn = document.getElementById('save-prompt-inline');
+            if (inlineBtn) inlineBtn.disabled = !isDirty;
           });
         }
 
