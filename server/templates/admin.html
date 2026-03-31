@@ -848,6 +848,9 @@
           </button>
 
           <div class="sidebar-section-label">IA & Ranqueamento</div>
+          <button class="nav-item" data-page="ai-hub">
+            <span class="nav-icon">🤖</span> AI Provider Hub
+          </button>
           <button class="nav-item" data-page="prompts">
             <span class="nav-icon">✨</span> Prompts de IA
           </button>
@@ -932,6 +935,7 @@
         dashboard:  'Dashboard',
         usuarios:   'Usuários & Vínculos',
         feedback:   'Caixa de Entrada',
+        'ai-hub':   'AI Provider Hub',
         prompts:    'Prompts de IA',
         kidscore:   'Motor de Ranqueamento',
         criterios:  'Critérios Customizados',
@@ -1060,6 +1064,7 @@
           case 'dashboard': renderDashboard(); break;
           case 'usuarios':  renderUsuarios(); break;
           case 'feedback':  renderFeedback(); break;
+          case 'ai-hub':    renderAiHub(); break;
           case 'prompts':   renderPrompts(); break;
           case 'kidscore':  renderKidscore(); break;
           case 'criterios': renderCriterios(); break;
@@ -1075,6 +1080,7 @@
         const implementedModules = [
           { id: 'usuarios',  icon: '👥', title: 'Usuários & Vínculos',    desc: 'Gerenciar contas e solicitações de vínculo' },
           { id: 'feedback',  icon: '📬', title: 'Caixa de Entrada',        desc: 'Sugestões, denúncias e locais fechados' },
+          { id: 'ai-hub',    icon: '🤖', title: 'AI Provider Hub',         desc: 'Chaves de API, roteamento e fallback por provedor' },
           { id: 'prompts',   icon: '✨', title: 'Prompts de IA',           desc: 'Editar e testar o system prompt da IA' },
           { id: 'kidscore',  icon: '⚖️', title: 'Motor de Ranqueamento',   desc: 'Pesos e critérios do KidScore' },
           { id: 'criterios', icon: '🏷️', title: 'Critérios Customizados',  desc: 'Atributos extras para curadoria' },
@@ -1490,6 +1496,324 @@
       }
 
       // =====================================================================
+      // ===== MÓDULO: AI PROVIDER HUB =======================================
+      // =====================================================================
+
+      const PROVIDER_LABELS = {
+        openai: 'OpenAI',
+        anthropic: 'Anthropic / Claude',
+        perplexity: 'Perplexity',
+        google: 'Google Gemini',
+      };
+
+      const STAGE_LABELS = {
+        place_discovery:        'Descoberta de Locais',
+        review_analysis:        'Análise de Reviews',
+        description_generation: 'Geração de Descrição',
+        score_calculation:      'Cálculo de Score',
+      };
+
+      let aiHubProviders = [];
+      let aiHubRouting = [];
+
+      async function renderAiHub() {
+        pageContent.innerHTML = `
+          <div class="tabs-row">
+            <button class="tab-btn active" id="tab-providers">🔑 Provedores</button>
+            <button class="tab-btn" id="tab-routing">🔀 Roteamento do Pipeline</button>
+          </div>
+          <div id="ai-hub-content"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+        `;
+        document.getElementById('tab-providers').addEventListener('click', () => {
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          document.getElementById('tab-providers').classList.add('active');
+          renderAiHubProviders();
+        });
+        document.getElementById('tab-routing').addEventListener('click', () => {
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          document.getElementById('tab-routing').classList.add('active');
+          renderAiHubRouting();
+        });
+        await loadAiHubData();
+        renderAiHubProviders();
+      }
+
+      async function loadAiHubData() {
+        try {
+          const [pRes, rRes] = await Promise.all([
+            apiFetch('/admin/ai-providers'),
+            apiFetch('/admin/pipeline-routing'),
+          ]);
+          const pData = await pRes.json();
+          const rData = await rRes.json();
+          if (pRes.ok) aiHubProviders = pData.providers || [];
+          if (rRes.ok) aiHubRouting = rData.routing || [];
+        } catch(e) {
+          console.error('Failed to load AI hub data', e);
+        }
+      }
+
+      function renderAiHubProviders() {
+        const cont = document.getElementById('ai-hub-content');
+        if (!cont) return;
+        cont.innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px;margin-top:4px">
+            ${aiHubProviders.map(p => renderProviderCard(p)).join('')}
+          </div>
+        `;
+        aiHubProviders.forEach(p => {
+          const editBtn = document.getElementById('edit-key-' + p.provider);
+          const testBtn = document.getElementById('test-' + p.provider);
+          if (editBtn) editBtn.addEventListener('click', () => openProviderKeyModal(p));
+          if (testBtn) testBtn.addEventListener('click', () => testProviderConnection(p.provider));
+        });
+      }
+
+      function renderProviderCard(p) {
+        const configured = p.configured;
+        const statusColor = configured ? 'var(--green)' : 'var(--red)';
+        const statusLabel = configured ? 'Configurado' : 'Não configurado';
+        const statusDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor};margin-right:5px"></span>`;
+        const testedAt = p.tested_at ? new Date(p.tested_at).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }) : null;
+
+        const providerIcons = { openai: '🟢', anthropic: '🟠', perplexity: '🔵', google: '🔴' };
+        const icon = providerIcons[p.provider] || '⚙️';
+
+        return `
+          <div style="background:var(--surface);border:1.5px solid ${configured ? 'var(--border)' : '#fecaca'};border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+              <span style="font-size:22px">${icon}</span>
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:15px">${escHtml(p.label)}</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${statusDot}${statusLabel}</div>
+              </div>
+            </div>
+            ${configured ? `
+              <div style="background:var(--bg);border-radius:6px;padding:8px 10px;font-family:monospace;font-size:12px;color:var(--text-muted);margin-bottom:12px;word-break:break-all">
+                ${escHtml(p.masked_key || '••••••••')}
+              </div>
+              ${testedAt ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Testado em: ${testedAt}</div>` : ''}
+            ` : `
+              <div style="background:#fef2f2;border-radius:6px;padding:8px 10px;font-size:12px;color:#dc2626;margin-bottom:12px">
+                ⚠️ Chave de API não configurada
+              </div>
+            `}
+            <div style="display:flex;gap:8px">
+              <button id="edit-key-${p.provider}" style="flex:1;padding:7px 10px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">
+                ${configured ? '✏️ Atualizar chave' : '+ Configurar chave'}
+              </button>
+              ${configured ? `
+                <button id="test-${p.provider}" style="padding:7px 10px;background:var(--bg);color:var(--text);border:1.5px solid var(--border);border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit">
+                  🔌 Testar
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }
+
+      function openProviderKeyModal(p) {
+        const bodyHtml = `
+          <div style="margin-bottom:16px">
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+              A chave será armazenada de forma criptografada e nunca será exibida em texto plano.
+              ${p.configured ? `<br><br>Chave atual: <code style="font-size:12px">${escHtml(p.masked_key || '••••••••')}</code>` : ''}
+            </p>
+            <div class="form-group">
+              <label class="form-label">Chave de API — ${escHtml(p.label)}</label>
+              <input class="form-input" id="provider-key-input" type="password" placeholder="Cole aqui a chave de API..." autocomplete="off" />
+            </div>
+          </div>
+        `;
+        const footerHtml = `
+          <button class="btn" style="padding:8px 20px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit" id="save-provider-key-btn">
+            Salvar chave
+          </button>
+          <button class="btn" onclick="closeModal()" style="padding:8px 16px;background:none;border:1.5px solid var(--border);border-radius:6px;font-size:14px;cursor:pointer;font-family:inherit;margin-left:8px">
+            Cancelar
+          </button>
+        `;
+        openModal(`Configurar chave — ${p.label}`, bodyHtml, footerHtml);
+
+        document.getElementById('save-provider-key-btn').addEventListener('click', async () => {
+          const key = document.getElementById('provider-key-input').value.trim();
+          if (!key) { alert('Informe a chave de API.'); return; }
+          const btn = document.getElementById('save-provider-key-btn');
+          btn.disabled = true; btn.textContent = 'Salvando…';
+          try {
+            const res = await apiFetch(`/admin/ai-providers/${p.provider}`, {
+              method: 'PUT', body: JSON.stringify({ api_key: key })
+            });
+            const d = await res.json();
+            if (!res.ok) throw new Error(d.error || 'Erro');
+            closeModal();
+            await loadAiHubData();
+            renderAiHubProviders();
+          } catch(e) {
+            alert('Erro: ' + e.message);
+            btn.disabled = false; btn.textContent = 'Salvar chave';
+          }
+        });
+      }
+
+      async function testProviderConnection(provider) {
+        const testBtn = document.getElementById('test-' + provider);
+        if (testBtn) { testBtn.disabled = true; testBtn.textContent = '⏳ Testando…'; }
+        try {
+          const res = await apiFetch(`/admin/ai-providers/${provider}/test`, { method: 'POST', body: '{}' });
+          const d = await res.json();
+          if (res.ok && d.ok) {
+            alert('✅ ' + (d.message || 'Conexão testada com sucesso!'));
+          } else {
+            alert('❌ Falha na conexão: ' + (d.error || 'Erro desconhecido'));
+          }
+          await loadAiHubData();
+          renderAiHubProviders();
+        } catch(e) {
+          alert('❌ Erro: ' + e.message);
+          if (testBtn) { testBtn.disabled = false; testBtn.textContent = '🔌 Testar'; }
+        }
+      }
+
+      function renderAiHubRouting() {
+        const cont = document.getElementById('ai-hub-content');
+        if (!cont) return;
+
+        const providerOptions = [
+          { value: '', label: '— Nenhum —' },
+          { value: 'openai', label: 'OpenAI' },
+          { value: 'anthropic', label: 'Anthropic / Claude' },
+          { value: 'perplexity', label: 'Perplexity' },
+          { value: 'google', label: 'Google Gemini' },
+        ];
+
+        const modelsByProvider = {
+          openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+          anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-5-sonnet-20241022'],
+          perplexity: ['llama-3.1-sonar-large-128k-online', 'llama-3.1-sonar-small-128k-online'],
+          google: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'],
+        };
+
+        const routingByStage = Object.fromEntries(aiHubRouting.map(r => [r.stage, r]));
+        const stages = ['place_discovery', 'review_analysis', 'description_generation', 'score_calculation'];
+
+        const configuredProviders = aiHubProviders.filter(p => p.configured).map(p => p.provider);
+
+        cont.innerHTML = `
+          <div style="margin-top:4px">
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px">
+              Defina qual provedor e modelo utilizar em cada etapa do pipeline. As alterações entram em vigor na próxima execução.
+            </p>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              ${stages.map(stage => {
+                const r = routingByStage[stage] || {};
+                const stageLabel = STAGE_LABELS[stage] || stage;
+                const currentProvider = r.primary_provider || '';
+                const currentModel = r.model || '';
+                const fallbackOrder = r.fallback_order || [];
+                const hasProvider = !!currentProvider;
+                const isConfigured = !currentProvider || configuredProviders.includes(currentProvider);
+                const alertStyle = !hasProvider ? 'border-color:#fbbf24;' : (!isConfigured ? 'border-color:#fecaca;' : '');
+
+                const modelOptions = currentProvider && modelsByProvider[currentProvider]
+                  ? modelsByProvider[currentProvider].map(m => `<option value="${m}" ${m===currentModel?'selected':''}>${m}</option>`).join('')
+                  : '';
+
+                const fallbackProviders = ['openai', 'anthropic', 'perplexity', 'google'].filter(p => p !== currentProvider);
+
+                return `
+                  <div style="background:var(--surface);border:1.5px solid var(--border);${alertStyle}border-radius:var(--radius);padding:18px">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+                      <div style="font-weight:600;font-size:14px;flex:1">${escHtml(stageLabel)}</div>
+                      ${!hasProvider ? '<span style="font-size:11px;background:#fef9c3;color:#92400e;border-radius:4px;padding:2px 7px">⚠️ Sem provedor</span>' : ''}
+                      ${hasProvider && !isConfigured ? '<span style="font-size:11px;background:#fef2f2;color:#dc2626;border-radius:4px;padding:2px 7px">⚠️ Chave não configurada</span>' : ''}
+                    </div>
+                    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+                      <div style="flex:1;min-width:160px">
+                        <label style="display:block;font-size:12px;font-weight:500;color:var(--text-muted);margin-bottom:5px">Provedor primário</label>
+                        <select id="route-provider-${stage}" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:inherit;background:var(--surface)">
+                          ${providerOptions.map(o => `<option value="${o.value}" ${o.value===currentProvider?'selected':''}>${o.label}</option>`).join('')}
+                        </select>
+                      </div>
+                      <div style="flex:1;min-width:160px">
+                        <label style="display:block;font-size:12px;font-weight:500;color:var(--text-muted);margin-bottom:5px">Modelo</label>
+                        <select id="route-model-${stage}" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:inherit;background:var(--surface)">
+                          ${modelOptions || '<option value="">— Selecione um provedor —</option>'}
+                        </select>
+                      </div>
+                      <button id="route-save-${stage}" style="padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
+                        Salvar
+                      </button>
+                    </div>
+                    <div style="margin-top:12px">
+                      <label style="display:block;font-size:12px;font-weight:500;color:var(--text-muted);margin-bottom:6px">Ordem de fallback</label>
+                      <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        ${fallbackProviders.map(fp => {
+                          const idx = fallbackOrder.indexOf(fp);
+                          const active = idx >= 0;
+                          return `
+                            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;padding:4px 10px;border:1.5px solid ${active?'var(--primary)':'var(--border)'};border-radius:20px;background:${active?'var(--primary-light)':'transparent'};color:${active?'var(--primary)':'var(--text-muted)'}">
+                              <input type="checkbox" data-fb-stage="${stage}" data-fb-provider="${fp}" ${active?'checked':''} style="accent-color:var(--primary)" />
+                              ${escHtml(PROVIDER_LABELS[fp] || fp)} ${active ? `(#${idx+1})` : ''}
+                            </label>
+                          `;
+                        }).join('')}
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+
+        stages.forEach(stage => {
+          const providerSelect = document.getElementById('route-provider-' + stage);
+          const modelSelect = document.getElementById('route-model-' + stage);
+
+          if (providerSelect && modelSelect) {
+            providerSelect.addEventListener('change', () => {
+              const prov = providerSelect.value;
+              const models = modelsByProvider[prov] || [];
+              modelSelect.innerHTML = models.length
+                ? models.map(m => `<option value="${m}">${m}</option>`).join('')
+                : '<option value="">— Selecione um provedor —</option>';
+            });
+          }
+
+          const saveBtn = document.getElementById('route-save-' + stage);
+          if (saveBtn) {
+            saveBtn.addEventListener('click', async () => {
+              const prov = providerSelect ? providerSelect.value : '';
+              const model = modelSelect ? modelSelect.value : '';
+              const fbCheckboxes = document.querySelectorAll(`input[data-fb-stage="${stage}"]`);
+              const fallbackOrder = Array.from(fbCheckboxes)
+                .filter(cb => cb.checked)
+                .map(cb => cb.getAttribute('data-fb-provider'));
+
+              saveBtn.disabled = true; saveBtn.textContent = 'Salvando…';
+              try {
+                const body = {
+                  primary_provider: prov || null,
+                  model: model || null,
+                  fallback_order: fallbackOrder,
+                };
+                const res = await apiFetch(`/admin/pipeline-routing/${stage}`, {
+                  method: 'PATCH', body: JSON.stringify(body)
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'Erro');
+                await loadAiHubData();
+                renderAiHubRouting();
+              } catch(e) {
+                alert('Erro: ' + e.message);
+                saveBtn.disabled = false; saveBtn.textContent = 'Salvar';
+              }
+            });
+          }
+        });
+      }
+
       // ===== MÓDULO: PROMPTS DE IA ==========================================
       // =====================================================================
       let promptDraft = null;

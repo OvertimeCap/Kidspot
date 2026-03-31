@@ -21,7 +21,8 @@ The frontend uses Expo (React Native) with Expo Router for navigation and `@tans
 The Express.js backend, written in TypeScript, serves as the API layer. It orchestrates data retrieval, applies business logic, and manages user authentication and data storage. Key components include:
 - **Google Places Integration:** Fetches and processes location data.
 - **Foursquare Places Integration:** Enriches place data with additional ratings and popularity metrics.
-- **OpenAI Integration:** Analyzes place reviews to identify family-friendly signals.
+- **AI Provider Hub:** Multi-provider AI integration supporting OpenAI, Anthropic/Claude, Perplexity, and Google Gemini. API keys are stored AES-256-GCM encrypted. Dynamic pipeline routing lets admins configure which provider/model to use per pipeline stage, with automatic fallback chains. Managed via the backoffice admin panel.
+- **OpenAI Integration:** Analyzes place reviews to identify family-friendly signals (now routed dynamically via the AI Provider Hub).
 - **KidScore Calculation:** A proprietary algorithm that ranks places based on various kid-friendly criteria (e.g., amenities, safety, user reviews).
 - **AI Pipeline:** An automated ingestion module (`server/pipeline.ts`) that scans Google Places for kid-friendly locations for specific cities, inserts them as `pendente`, and logs execution metrics to the `pipeline_runs` table.
 - **Authentication:** JWT-based system with roles: `admin`, `colaborador`, `parceiro`, and `usuario`.
@@ -32,6 +33,7 @@ The Express.js backend, written in TypeScript, serves as the API layer. It orche
     - AI Prompts and KidScore Rules
     - Community Feedback and Criteria
     - AI Operations (City management and Pipeline execution)
+- **Admin Panel:** A separate web-based admin panel (`/admin`) accessible via Express, offering modules for user management, feedback processing, AI prompt configuration, KidScore rule adjustments, custom criteria definition, app filter management, and city configuration. This panel is a pure HTML/JS single-page application.
 
 ### Database
 PostgreSQL is the primary database, accessed via Drizzle ORM. The schema includes:

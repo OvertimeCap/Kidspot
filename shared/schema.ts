@@ -419,3 +419,43 @@ export type InsertCity = z.infer<typeof insertCitySchema>;
 export type PipelineRun = typeof pipelineRuns.$inferSelect;
 export type InsertPipelineRun = typeof pipelineRuns.$inferInsert;
 export type PlaceStatus = "pendente" | "aprovado" | "rejeitado";
+
+export const aiProviderEnum = pgEnum("ai_provider", [
+  "openai",
+  "anthropic",
+  "perplexity",
+  "google",
+]);
+
+export const aiProviders = pgTable("ai_providers", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  provider: aiProviderEnum("provider").notNull().unique(),
+  encrypted_key: text("encrypted_key"),
+  is_active: boolean("is_active").notNull().default(false),
+  tested_at: timestamp("tested_at"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const pipelineStageEnum = pgEnum("pipeline_stage", [
+  "place_discovery",
+  "review_analysis",
+  "description_generation",
+  "score_calculation",
+]);
+
+export const pipelineRouting = pgTable("pipeline_routing", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  stage: pipelineStageEnum("stage").notNull().unique(),
+  primary_provider: aiProviderEnum("primary_provider"),
+  model: text("model"),
+  fallback_order: jsonb("fallback_order").$type<string[]>().default([]),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type AiProvider = typeof aiProviders.$inferSelect;
+export type PipelineRouting = typeof pipelineRouting.$inferSelect;

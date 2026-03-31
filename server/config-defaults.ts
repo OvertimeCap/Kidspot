@@ -1,6 +1,8 @@
-import { db } from "./db";
-import { aiPrompts, kidscoreRules, customCriteria } from "@shared/schema";
+import { db, pool } from "./db";
+import { aiPrompts, kidscoreRules, customCriteria, aiProviders, pipelineRouting } from "@shared/schema";
 import { count } from "drizzle-orm";
+import * as fs from "fs";
+import * as path from "path";
 
 const DEFAULT_AI_PROMPT = `Você é um assistente especializado em avaliar se um estabelecimento é adequado para famílias com crianças pequenas (0-10 anos).
 
@@ -49,7 +51,36 @@ const DEFAULT_CUSTOM_CRITERIA = [
   { key: "seguro", label: "Ambiente Seguro", field_type: "boolean", show_in_filter: true },
 ];
 
+async function runMigrations(): Promise<void> {
+  const migrationsDir = path.resolve(process.cwd(), "server", "migrations");
+  if (!fs.existsSync(migrationsDir)) return;
+
+  const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
+  for (const file of files) {
+    const sql = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
+    try {
+      await pool.query(sql);
+      console.log(`[migrations] applied: ${file}`);
+    } catch (err) {
+      console.warn(`[migrations] ${file} failed (may already be applied):`, (err as Error).message);
+    }
+  }
+}
+
+const DEFAULT_PIPELINE_STAGES = [
+  { stage: "place_discovery" as const, primary_provider: "openai" as const, model: "gpt-4o-mini", fallback_order: [] },
+  { stage: "review_analysis" as const, primary_provider: "openai" as const, model: "gpt-4o-mini", fallback_order: [] },
+  { stage: "description_generation" as const, primary_provider: "openai" as const, model: "gpt-4o-mini", fallback_order: [] },
+  { stage: "score_calculation" as const, primary_provider: "openai" as const, model: "gpt-4o-mini", fallback_order: [] },
+];
+
 export async function seedConfigDefaults(): Promise<void> {
+  try {
+    await runMigrations();
+  } catch (err) {
+    console.warn("[migrations] failed:", err);
+  }
+
   try {
     const [promptCount] = await db.select({ count: count() }).from(aiPrompts);
     if ((promptCount?.count ?? 0) === 0) {
@@ -75,6 +106,12 @@ export async function seedConfigDefaults(): Promise<void> {
         DEFAULT_CUSTOM_CRITERIA.map((c) => ({ ...c, is_active: true })),
       );
       console.log("[seed] custom_criteria: inserted", DEFAULT_CUSTOM_CRITERIA.length, "criteria");
+    }
+
+    const [routingCount] = await db.select({ count: count() }).from(pipelineRouting);
+    if ((routingCount?.count ?? 0) === 0) {
+      await db.insert(pipelineRouting).values(DEFAULT_PIPELINE_STAGES);
+      console.log("[seed] pipeline_routing: inserted", DEFAULT_PIPELINE_STAGES.length, "stages");
     }
   } catch (err) {
     console.warn("[seed] config defaults failed:", err);
