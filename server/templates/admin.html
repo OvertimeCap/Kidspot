@@ -2519,13 +2519,15 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         const freqLabels = { diaria:'Diária', semanal:'Semanal', quinzenal:'Quinzenal', mensal:'Mensal' };
 
         pageContent.innerHTML = `
-          <div class="search-bar">
-            <input class="search-input" id="cidade-search" placeholder="Buscar cidade ou estado…" value="${escHtml(cidadesSearch)}" />
-            ${isAdmin ? '<button class="btn btn-orange" id="new-cidade-btn">+ Nova Cidade</button>' : ''}
+          <div class="search-bar" style="position:relative">
+            <div class="ac-wrap" style="flex:1">
+              <input class="search-input" id="cidade-search" placeholder="Pesquisar cidade brasileira para adicionar…" value="${escHtml(cidadesSearch)}" autocomplete="off" />
+              <div class="ac-dropdown" id="cidade-ac-dropdown" style="display:none"></div>
+            </div>
           </div>
 
           ${cities.length === 0
-            ? '<div class="empty-state"><div class="empty-state-icon">🏙️</div><p>Nenhuma cidade cadastrada</p></div>'
+            ? '<div class="empty-state"><div class="empty-state-icon">🏙️</div><p>Nenhuma cidade cadastrada. Digite o nome de uma cidade acima para adicionar.</p></div>'
             : cities.map(c => `
                 <div class="item-row" style="${!c.ativa?'opacity:0.6':''}">
                   <div class="item-avatar" style="background:${c.ativa?'#2563EB':'#9ca3af'};font-size:20px;width:42px;height:42px">🏙️</div>
@@ -2549,11 +2551,68 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           }
         `;
 
-        let searchTimer;
-        document.getElementById('cidade-search').addEventListener('input', e => {
-          clearTimeout(searchTimer);
-          cidadesSearch = e.target.value;
-          searchTimer = setTimeout(renderCidades, 350);
+        // Page-level autocomplete for adding cities
+        const pageSearchInput = document.getElementById('cidade-search');
+        const pageDropdown = document.getElementById('cidade-ac-dropdown');
+        let pageAcTimer = null;
+
+        function closePageDropdown() {
+          pageDropdown.style.display = 'none';
+          pageDropdown.innerHTML = '';
+        }
+
+        function showPageDropdown(items) {
+          if (!items.length) {
+            pageDropdown.innerHTML = '<div class="ac-loading">Nenhuma cidade encontrada</div>';
+            pageDropdown.style.display = 'block';
+            return;
+          }
+          pageDropdown.innerHTML = items.map((s, i) =>
+            `<div class="ac-item" data-idx="${i}" data-place-id="${escHtml(s.place_id)}" data-desc="${escHtml(s.description)}">${escHtml(s.description)}</div>`
+          ).join('');
+          pageDropdown.style.display = 'block';
+
+          pageDropdown.querySelectorAll('.ac-item').forEach(el => {
+            el.addEventListener('mousedown', async (e) => {
+              e.preventDefault();
+              const placeId = el.dataset.placeId;
+              closePageDropdown();
+              pageSearchInput.value = '';
+              pageSearchInput.disabled = true;
+              pageSearchInput.placeholder = 'Obtendo dados da cidade…';
+              try {
+                const gr = await apiFetch(`/admin/cities/geocode?place_id=${encodeURIComponent(placeId)}`);
+                const gd = await gr.json();
+                if (!gr.ok) throw new Error(gd.error || 'Erro no geocode');
+                openCidadeModal(null, gd);
+              } catch(err) {
+                alert('Erro ao obter dados da cidade: ' + err.message);
+              } finally {
+                pageSearchInput.disabled = false;
+                pageSearchInput.placeholder = 'Pesquisar cidade brasileira para adicionar…';
+              }
+            });
+          });
+        }
+
+        pageSearchInput.addEventListener('input', () => {
+          clearTimeout(pageAcTimer);
+          const q = pageSearchInput.value.trim();
+          cidadesSearch = q;
+          if (q.length < 2) { closePageDropdown(); return; }
+          pageDropdown.innerHTML = '<div class="ac-loading">Buscando cidades…</div>';
+          pageDropdown.style.display = 'block';
+          pageAcTimer = setTimeout(async () => {
+            try {
+              const r = await apiFetch(`/places/autocomplete?input=${encodeURIComponent(q)}`);
+              const d = await r.json();
+              showPageDropdown(d.suggestions || []);
+            } catch { closePageDropdown(); }
+          }, 300);
+        });
+
+        pageSearchInput.addEventListener('blur', () => {
+          setTimeout(closePageDropdown, 200);
         });
 
         pageContent.querySelectorAll('.cidade-toggle').forEach(chk => {
@@ -2589,16 +2648,12 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
           });
         });
-
-        document.getElementById('new-cidade-btn')?.addEventListener('click', () => openCidadeModal(null));
       }
 
-      async function openCidadeModal(city) {
+      async function openCidadeModal(city, prefilledGeocode) {
         const isNew = !city;
+        const prefill = prefilledGeocode || null;
 
-        // Determine the initial prompt text to show
-        // For existing cities: use system_prompt from parametros_prompt if present
-        // For new cities: fetch the global active system prompt
         let initialPrompt = '';
         if (city && city.parametros_prompt && city.parametros_prompt.system_prompt) {
           initialPrompt = city.parametros_prompt.system_prompt;
@@ -2612,17 +2667,21 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           } catch(e) { initialPrompt = ''; }
         }
 
+        const displayName = prefill ? (prefill.nome + ', ' + prefill.estado) : (city ? escHtml(city.nome) + (city.estado ? ', ' + escHtml(city.estado) : '') : '');
+        const badgeName = prefill ? (escHtml(prefill.nome) + ' — ' + escHtml(prefill.estado)) : (city ? escHtml(city.nome) + ' — ' + escHtml(city.estado) : '');
+        const hasPrefill = prefill || city;
+
         openModal(isNew ? 'Nova Cidade' : 'Editar Cidade', `
           <div class="field-group">
             <label class="field-label">Cidade *</label>
             <div class="ac-wrap">
               <input class="field-input" id="cid-search" autocomplete="off"
-                value="${city ? escHtml(city.nome) + (city.estado ? ', ' + escHtml(city.estado) : '') : ''}"
+                value="${displayName}"
                 placeholder="Digite o nome da cidade…" />
               <div class="ac-dropdown" id="cid-dropdown" style="display:none"></div>
             </div>
-            <div id="cid-selected-info" style="display:${city?'block':'none'}">
-              <span class="ac-selected-badge">✓ ${city ? escHtml(city.nome) + ' — ' + escHtml(city.estado) : ''}</span>
+            <div id="cid-selected-info" style="display:${hasPrefill?'block':'none'}">
+              <span class="ac-selected-badge">✓ ${badgeName}</span>
             </div>
           </div>
           <div class="field-row">
@@ -2661,8 +2720,12 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         // Set prompt value programmatically to avoid template literal escaping issues
         document.getElementById('cid-prompt').value = initialPrompt;
 
-        // State for the selected city from autocomplete
-        let resolvedCity = city ? {
+        let resolvedCity = prefill ? {
+          nome: prefill.nome,
+          estado: prefill.estado,
+          latitude: prefill.latitude,
+          longitude: prefill.longitude,
+        } : city ? {
           nome: city.nome,
           estado: city.estado,
           latitude: city.latitude,
