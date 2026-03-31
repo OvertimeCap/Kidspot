@@ -2102,7 +2102,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const updateCitySchema = insertCitySchema.partial();
 
-  app.get("/api/admin/cities", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+  app.get("/api/admin/cities", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const search = req.query.search as string | undefined;
     try {
       const cityList = await listCities(search);
@@ -2113,8 +2118,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/cities", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+  app.post("/api/admin/cities", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || caller.role !== "admin") {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const parsed = insertCitySchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: parsed.error.flatten() });
@@ -2135,8 +2145,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  app.patch("/api/admin/cities/:id", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+  app.patch("/api/admin/cities/:id", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || caller.role !== "admin") {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const parsed = updateCitySchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: parsed.error.flatten() });
@@ -2157,8 +2172,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  app.patch("/api/admin/cities/:id/toggle", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+  app.patch("/api/admin/cities/:id/toggle", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || caller.role !== "admin") {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const cityId = req.params.id as string;
       try {
         const city = await toggleCityActive(cityId);
@@ -2174,8 +2194,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  app.delete("/api/admin/cities/:id", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+  app.delete("/api/admin/cities/:id", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || caller.role !== "admin") {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const cityId = req.params.id as string;
       try {
         const deleted = await deleteCity(cityId);
@@ -2199,8 +2224,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     city_id: z.string().optional(),
   });
 
-  app.post("/api/admin/pipeline/run", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
+  app.post("/api/admin/pipeline/run", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const parsed = pipelineRunSchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: parsed.error.flatten() });
@@ -2224,8 +2254,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  app.get("/api/admin/pipeline/runs", requireBackofficeAuth, trackBackofficeActivity,
+  app.get("/api/admin/pipeline/runs", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 200);
       const offset = parseInt((req.query.offset as string) || "0", 10);
 
@@ -2246,8 +2281,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* Places curation (status management)                                 */
   /* ------------------------------------------------------------------ */
 
-  app.get("/api/admin/places/pending", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
+  app.get("/api/admin/places/pending", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 200);
       const offset = parseInt((req.query.offset as string) || "0", 10);
       try {
@@ -2267,8 +2307,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     status: z.enum(["aprovado", "rejeitado"]),
   });
 
-  app.patch("/api/admin/places/:place_id/status", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
+  app.patch("/api/admin/places/:place_id/status", requireAuth,
     async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
       const parsed = updatePlaceStatusSchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: parsed.error.flatten() });
@@ -2769,7 +2814,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* Admin — Sponsorship Plans                                           */
   /* ------------------------------------------------------------------ */
 
-  app.get("/api/admin/sponsorship/plans", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+  app.get("/api/admin/sponsorship/plans", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     try {
       const plans = await listSponsorshipPlans();
       res.json({ plans });
@@ -2778,7 +2828,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/sponsorship/plans", requireBackofficeAuth, trackBackofficeActivity, withAudit("create", "sponsorship_plans"), async (req: AuthRequest, res: Response) => {
+  app.post("/api/admin/sponsorship/plans", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const parsed = insertSponsorshipPlanSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
@@ -2797,7 +2852,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/admin/sponsorship/plans/:id", requireBackofficeAuth, trackBackofficeActivity, withAudit("update", "sponsorship_plans"), async (req: AuthRequest, res: Response) => {
+  app.patch("/api/admin/sponsorship/plans/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const { id } = req.params;
     const parsed = insertSponsorshipPlanSchema.partial().safeParse(req.body);
     if (!parsed.success) {
@@ -2816,7 +2876,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/sponsorship/plans/:id", requireBackofficeAuth, trackBackofficeActivity, withAudit("delete", "sponsorship_plans"), async (req: AuthRequest, res: Response) => {
+  app.delete("/api/admin/sponsorship/plans/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const { id } = req.params;
     try {
       const ok = await deleteSponsorshipPlan(id);
@@ -2831,7 +2896,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* Admin — Sponsorship Contracts                                        */
   /* ------------------------------------------------------------------ */
 
-  app.get("/api/admin/sponsorship/contracts", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+  app.get("/api/admin/sponsorship/contracts", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const status = req.query.status as string | undefined;
     const place_id = req.query.place_id as string | undefined;
     try {
@@ -2843,7 +2913,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/sponsorship/contracts", requireBackofficeAuth, trackBackofficeActivity, withAudit("create", "sponsorship_contracts"), async (req: AuthRequest, res: Response) => {
+  app.post("/api/admin/sponsorship/contracts", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const parsed = insertSponsorshipContractSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
@@ -2864,7 +2939,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/admin/sponsorship/contracts/:id", requireBackofficeAuth, trackBackofficeActivity, withAudit("update", "sponsorship_contracts"), async (req: AuthRequest, res: Response) => {
+  app.patch("/api/admin/sponsorship/contracts/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const { id } = req.params;
     const updateSchema = z.object({
       plan_id: z.string().optional(),
@@ -2891,7 +2971,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/sponsorship/contracts/:id/performance", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+  app.get("/api/admin/sponsorship/contracts/:id/performance", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const { id } = req.params;
     try {
       const perf = await getSponsorshipPerformance(id);
@@ -2906,7 +2991,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* Admin — Search approved places for sponsorship                       */
   /* ------------------------------------------------------------------ */
 
-  app.get("/api/admin/sponsorship/search-places", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+  app.get("/api/admin/sponsorship/search-places", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+      res.status(403).json({ error: "Acesso negado" });
+      return;
+    }
     const q = (req.query.q as string) ?? "";
     const city = (req.query.city as string) ?? "";
 

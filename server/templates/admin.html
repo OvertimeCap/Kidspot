@@ -1021,7 +1021,7 @@
         const password = document.getElementById('password').value;
 
         try {
-          const res  = await apiFetch('/backoffice/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+          const res  = await apiFetch('/admin/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
           const data = await res.json();
 
           if (!res.ok) { showLoginError(data.error || 'Erro ao autenticar'); return; }
@@ -3565,7 +3565,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         if (!currentToken) { showLogin(); return; }
 
         try {
-          const res  = await apiFetch('/backoffice/auth/me');
+          const res  = await apiFetch('/admin/auth/me');
           if (!res.ok) throw new Error('unauthorized');
           const data = await res.json();
           adminUser  = data.user;
