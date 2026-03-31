@@ -2605,8 +2605,10 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         } else {
           try {
             const pr = await apiFetch('/admin/cities/active-prompt');
-            const pd = await pr.json();
-            initialPrompt = pd.prompt || '';
+            if (pr.ok) {
+              const pd = await pr.json();
+              initialPrompt = pd.prompt || '';
+            }
           } catch(e) { initialPrompt = ''; }
         }
 
