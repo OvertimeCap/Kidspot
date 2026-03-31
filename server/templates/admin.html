@@ -950,13 +950,12 @@
         curadoria:  'Fila de Curadoria',
         locais:     'Locais',
         stories:    'Stories',
-        parceiros:  'Parceiros',
+        parceiros:  'Parcerias & Patrocínios',
       };
 
       const MODULES_PLACEHOLDER = [
         { id: 'locais',    icon: '📍', title: 'Locais', desc: 'Gerenciar estabelecimentos cadastrados' },
         { id: 'stories',   icon: '📸', title: 'Stories', desc: 'Gerenciar stories de parceiros' },
-        { id: 'parceiros', icon: '🤝', title: 'Parceiros', desc: 'Gerenciar parceiros e benefícios' },
       ];
 
       // ===== DOM =====
@@ -1022,7 +1021,7 @@
         const password = document.getElementById('password').value;
 
         try {
-          const res  = await apiFetch('/admin/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+          const res  = await apiFetch('/backoffice/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
           const data = await res.json();
 
           if (!res.ok) { showLoginError(data.error || 'Erro ao autenticar'); return; }
@@ -1079,6 +1078,7 @@
           case 'filtros':   renderFiltros(); break;
           case 'cidades':   renderCidades(); break;
           case 'curadoria': renderCuradoria(); break;
+          case 'parceiros': renderParceiros(); break;
           default:          renderPlaceholder(page); break;
         }
       }
@@ -1098,7 +1098,7 @@
           { id: 'curadoria', icon: '🔍', title: 'Fila de Curadoria',       desc: 'Revisar e aprovar lugares antes de publicar' },
           { id: 'locais',    icon: '📍', title: 'Locais',                  desc: 'Em desenvolvimento' },
           { id: 'stories',   icon: '📸', title: 'Stories',                 desc: 'Em desenvolvimento' },
-          { id: 'parceiros', icon: '🤝', title: 'Parceiros',               desc: 'Em desenvolvimento' },
+          { id: 'parceiros', icon: '🤝', title: 'Parcerias & Patrocínios', desc: 'Planos, contratos e performance de patrocínios' },
         ];
 
         pageContent.innerHTML = `
@@ -3005,6 +3005,173 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         });
       }
 
+      // =====================================================================
+      // ===== MÓDULO: PARCERIAS & PATROCÍNIOS ================================
+      // =====================================================================
+      let parceiroTab = 'planos'; // 'planos' | 'contratos' | 'relatorio'
+      let planosList = [];
+      let contratosList = [];
+      let contratosStatusFilter = '';
+
+      async function renderParceiros() {
+        pageContent.innerHTML = `
+          <div class="tabs-row">
+            <button class="tab-btn ${parceiroTab==='planos'?'active':''}" id="tab-planos">📦 Planos Comerciais</button>
+            <button class="tab-btn ${parceiroTab==='contratos'?'active':''}" id="tab-contratos">📋 Contratos</button>
+            <button class="tab-btn ${parceiroTab==='relatorio'?'active':''}" id="tab-relatorio">📊 Relatório</button>
+          </div>
+          <div id="parceiro-tab-content"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+        `;
+
+        document.getElementById('tab-planos').addEventListener('click', () => { parceiroTab='planos'; renderParceiros(); });
+        document.getElementById('tab-contratos').addEventListener('click', () => { parceiroTab='contratos'; renderParceiros(); });
+        document.getElementById('tab-relatorio').addEventListener('click', () => { parceiroTab='relatorio'; renderParceiros(); });
+
+        if (parceiroTab === 'planos') await renderPlanosTab();
+        else if (parceiroTab === 'contratos') await renderContratosTab();
+        else await renderRelatorioTab();
+      }
+
+      // ===== ABA: PLANOS =====
+      async function renderPlanosTab() {
+        const el = document.getElementById('parceiro-tab-content');
+        el.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+        try {
+          const res = await apiFetch('/admin/sponsorship/plans');
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Erro');
+          planosList = data.plans || [];
+          renderPlanosUI();
+        } catch(e) {
+          el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
+        }
+      }
+
+      function renderPlanosUI() {
+        const el = document.getElementById('parceiro-tab-content');
+        const isAdmin = adminUser?.role === 'super_admin' || adminUser?.role === 'admin' || adminUser?.role === 'curador';
+
+        el.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+            <div>
+              <span style="font-size:14px;color:var(--text-muted)">${planosList.length} plano${planosList.length!==1?'s':''} cadastrado${planosList.length!==1?'s':''}</span>
+            </div>
+            ${isAdmin ? '<button class="btn btn-orange" id="new-plano-btn">+ Novo Plano</button>' : ''}
+          </div>
+
+          ${planosList.length === 0
+            ? '<div class="empty-state"><div class="empty-state-icon">📦</div><p>Nenhum plano cadastrado</p></div>'
+            : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+                ${planosList.map(p => {
+                  const colors = [['#FF6B35','#fff3ef'],['#2563EB','#eff6ff'],['#059669','#f0fdf4'],['#7C3AED','#f5f3ff']];
+                  const [c,bg] = colors[Math.abs(p.name.length) % colors.length];
+                  return `
+                    <div class="card" style="border-top:3px solid ${c};position:relative">
+                      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+                        <div>
+                          <div style="font-size:18px;font-weight:700;color:var(--text)">${escHtml(p.name)}</div>
+                          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Prioridade ${p.priority}</div>
+                        </div>
+                        <div style="text-align:right">
+                          <div style="font-size:20px;font-weight:700;color:${c}">R$ ${parseFloat(p.reference_price||0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</div>
+                          <div style="font-size:11px;color:var(--text-muted)">preço de referência</div>
+                        </div>
+                      </div>
+                      ${p.benefits ? `<p style="font-size:13px;color:var(--text-muted);line-height:1.5;margin-bottom:12px">${escHtml(p.benefits)}</p>` : ''}
+                      ${isAdmin ? `
+                        <div style="display:flex;gap:8px;border-top:1px solid var(--border);padding-top:12px">
+                          <button class="btn btn-sm btn-outline edit-plano" data-id="${p.id}">✏️ Editar</button>
+                          <button class="btn btn-sm btn-red delete-plano" data-id="${p.id}" data-name="${escHtml(p.name)}">🗑 Excluir</button>
+                        </div>
+                      ` : ''}
+                    </div>
+                  `;
+                }).join('')}
+              </div>`
+          }
+        `;
+
+        document.getElementById('new-plano-btn')?.addEventListener('click', () => openPlanoModal(null));
+
+        el.querySelectorAll('.edit-plano').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const plan = planosList.find(p => p.id === btn.dataset.id);
+            if (plan) openPlanoModal(plan);
+          });
+        });
+
+        el.querySelectorAll('.delete-plano').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const { id, name } = btn.dataset;
+            if (!confirm(`Excluir o plano "${name}"? Contratos associados ainda existirão.`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/sponsorship/plans/${id}`, { method: 'DELETE' });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              await renderPlanosTab();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+      }
+
+      function openPlanoModal(plan) {
+        const isNew = !plan;
+        openModal(isNew ? 'Novo Plano Comercial' : 'Editar Plano', `
+          <div class="field-group">
+            <label class="field-label">Nome do plano *</label>
+            <input class="field-input" id="pl-name" value="${plan?escHtml(plan.name):''}" placeholder="Ex: Ouro" />
+          </div>
+          <div class="field-row">
+            <div class="field-group">
+              <label class="field-label">Prioridade de exibição *</label>
+              <input class="field-input" id="pl-priority" type="number" value="${plan?plan.priority:0}" min="0" max="9999" placeholder="0" />
+              <p class="field-sub">Maior número = posição mais alta na busca.</p>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Preço de referência (R$)</label>
+              <input class="field-input" id="pl-price" type="number" value="${plan?parseFloat(plan.reference_price||0):0}" min="0" step="0.01" placeholder="0.00" />
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Benefícios (texto livre)</label>
+            <textarea class="field-input" id="pl-benefits" rows="4" placeholder="Descreva os benefícios incluídos neste plano...">${plan&&plan.benefits?escHtml(plan.benefits):''}</textarea>
+          </div>
+        `, `
+          <button class="btn btn-gray" id="pl-cancel">Cancelar</button>
+          <button class="btn btn-orange" id="pl-save">Salvar Plano</button>
+        `);
+
+        document.getElementById('pl-cancel').addEventListener('click', closeModal);
+
+        document.getElementById('pl-save').addEventListener('click', async () => {
+          const name     = document.getElementById('pl-name').value.trim();
+          const priority = parseInt(document.getElementById('pl-priority').value, 10);
+          const price    = parseFloat(document.getElementById('pl-price').value) || 0;
+          const benefits = document.getElementById('pl-benefits').value.trim() || null;
+
+          if (!name) { alert('Nome é obrigatório.'); return; }
+          if (isNaN(priority) || priority < 0) { alert('Prioridade deve ser um número positivo.'); return; }
+
+          const saveBtn = document.getElementById('pl-save');
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Salvando…';
+          try {
+            const body = { name, priority, reference_price: price, benefits };
+            const res = plan
+              ? await apiFetch(`/admin/sponsorship/plans/${plan.id}`, { method: 'PATCH', body: JSON.stringify(body) })
+              : await apiFetch('/admin/sponsorship/plans', { method: 'POST', body: JSON.stringify(body) });
+            const d = await res.json();
+            if (!res.ok) throw new Error(d.error || 'Erro');
+            closeModal();
+            await renderPlanosTab();
+          } catch(e) {
+            alert('Erro: ' + e.message);
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Salvar Plano';
+          }
+        });
+      }
+
       async function loadCuradoriaBadge() {
         try {
           const res  = await apiFetch('/admin/curation/pending-count');
@@ -3016,6 +3183,341 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             curadoriaBadge.style.display = 'none';
           }
         } catch {}
+      }
+
+      // ===== ABA: CONTRATOS =====
+      async function renderContratosTab() {
+        const el = document.getElementById('parceiro-tab-content');
+        el.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+        try {
+          const param = contratosStatusFilter ? `?status=${encodeURIComponent(contratosStatusFilter)}` : '';
+          const [resContratos, resPlanos] = await Promise.all([
+            apiFetch(`/admin/sponsorship/contracts${param}`),
+            apiFetch('/admin/sponsorship/plans'),
+          ]);
+          const dc = await resContratos.json();
+          const dp = await resPlanos.json();
+          if (!resContratos.ok) throw new Error(dc.error || 'Erro');
+          contratosList = dc.contracts || [];
+          planosList = dp.plans || [];
+          renderContratosUI();
+        } catch(e) {
+          el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
+        }
+      }
+
+      function renderContratosUI() {
+        const el = document.getElementById('parceiro-tab-content');
+        const isAdmin = adminUser?.role === 'super_admin' || adminUser?.role === 'admin' || adminUser?.role === 'curador';
+        const now = new Date();
+        const in30days = new Date(now.getTime() + 30*24*60*60*1000);
+        const statusColors = { ativo:'#059669', expirado:'#9ca3af', cancelado:'#dc2626' };
+        const statusLabels = { ativo:'Ativo', expirado:'Expirado', cancelado:'Cancelado' };
+
+        el.innerHTML = `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+            <select class="select-input" id="contratos-status-filter">
+              <option value="" ${!contratosStatusFilter?'selected':''}>Todos os status</option>
+              <option value="ativo" ${contratosStatusFilter==='ativo'?'selected':''}>Ativo</option>
+              <option value="expirado" ${contratosStatusFilter==='expirado'?'selected':''}>Expirado</option>
+              <option value="cancelado" ${contratosStatusFilter==='cancelado'?'selected':''}>Cancelado</option>
+            </select>
+            <span style="font-size:13px;color:var(--text-muted);flex:1">${contratosList.length} contrato${contratosList.length!==1?'s':''}</span>
+            ${isAdmin ? '<button class="btn btn-orange" id="new-contrato-btn">+ Novo Contrato</button>' : ''}
+          </div>
+
+          ${contratosList.length === 0
+            ? '<div class="empty-state"><div class="empty-state-icon">📋</div><p>Nenhum contrato encontrado</p></div>'
+            : contratosList.map(c => {
+                const endsAt = new Date(c.ends_at);
+                const isExpiring = c.status === 'ativo' && endsAt <= in30days && endsAt > now;
+                const isExpired = c.status === 'expirado';
+                const isCanceled = c.status === 'cancelado';
+                return `
+                  <div class="card card-sm" style="margin-bottom:8px;${isCanceled||isExpired?'opacity:0.75':''}">
+                    <div style="display:flex;align-items:flex-start;gap:12px">
+                      <div style="flex:1;min-width:0">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                          <span style="font-size:15px;font-weight:700;color:var(--text)">${escHtml(c.place_name)}</span>
+                          <span class="badge" style="background:${statusColors[c.status]}18;color:${statusColors[c.status]}">${statusLabels[c.status]||c.status}</span>
+                          ${isExpiring ? '<span class="badge" style="background:#fffbeb;color:#d97706">⚠️ Vence em 30 dias</span>' : ''}
+                        </div>
+                        <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px">
+                          <span style="background:#f3f4f6;padding:2px 8px;border-radius:4px;margin-right:6px">📦 ${escHtml(c.plan_name)}</span>
+                          <span>Prioridade ${c.plan_priority}</span>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-muted)">
+                          📅 ${new Date(c.starts_at).toLocaleDateString('pt-BR')} → ${new Date(c.ends_at).toLocaleDateString('pt-BR')}
+                          ${c.notes ? `<span style="margin-left:12px;font-style:italic">📝 ${escHtml(c.notes)}</span>` : ''}
+                        </div>
+                      </div>
+                      ${isAdmin ? `
+                        <div style="display:flex;gap:6px;flex-shrink:0">
+                          ${c.status === 'ativo' ? `
+                            <button class="btn btn-sm btn-gray edit-contrato" data-id="${c.id}">✏️</button>
+                            <button class="btn btn-sm btn-red cancel-contrato" data-id="${c.id}" data-name="${escHtml(c.place_name)}">✕</button>
+                          ` : ''}
+                          <button class="btn btn-sm btn-gray view-perf" data-id="${c.id}" data-name="${escHtml(c.place_name)}">📊</button>
+                        </div>
+                      ` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')
+          }
+        `;
+
+        document.getElementById('contratos-status-filter')?.addEventListener('change', e => {
+          contratosStatusFilter = e.target.value;
+          renderContratosTab();
+        });
+
+        document.getElementById('new-contrato-btn')?.addEventListener('click', () => openContratoModal(null));
+
+        el.querySelectorAll('.edit-contrato').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const c = contratosList.find(x => x.id === btn.dataset.id);
+            if (c) openContratoModal(c);
+          });
+        });
+
+        el.querySelectorAll('.cancel-contrato').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const { id, name } = btn.dataset;
+            if (!confirm(`Cancelar o contrato de "${name}"? Esta ação não pode ser desfeita.`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/sponsorship/contracts/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelado' }) });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              await renderContratosTab();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        el.querySelectorAll('.view-perf').forEach(btn => {
+          btn.addEventListener('click', () => {
+            parceiroTab = 'relatorio';
+            renderParceiros().then(() => {
+              const selEl = document.getElementById('relatorio-contrato-select');
+              if (selEl) { selEl.value = btn.dataset.id; selEl.dispatchEvent(new Event('change')); }
+            });
+          });
+        });
+      }
+
+      async function openContratoModal(contrato) {
+        const isNew = !contrato;
+        let searchTimeout;
+        let searchResults = [];
+
+        openModal(isNew ? 'Novo Contrato' : 'Editar Contrato', `
+          ${isNew ? `
+            <div class="field-group">
+              <label class="field-label">Buscar estabelecimento *</label>
+              <div style="display:flex;gap:8px">
+                <input class="field-input" id="ct-search" placeholder="Nome do estabelecimento..." style="flex:1" />
+                <select class="select-input" id="ct-city" style="min-width:130px">
+                  <option value="">Qualquer cidade</option>
+                </select>
+              </div>
+              <div id="ct-search-results" style="margin-top:8px"></div>
+              <input type="hidden" id="ct-place-id" />
+              <input type="hidden" id="ct-place-name" />
+            </div>
+          ` : `
+            <div class="info-box" style="margin-bottom:16px">
+              <span class="info-box-icon">📍</span>
+              <span><strong>${escHtml(contrato.place_name)}</strong></span>
+            </div>
+          `}
+          <div class="field-group">
+            <label class="field-label">Plano *</label>
+            <select class="field-input" id="ct-plan">
+              <option value="">Selecione um plano</option>
+              ${planosList.map(p => `<option value="${p.id}" ${contrato&&contrato.plan_id===p.id?'selected':''}>${escHtml(p.name)} (Prioridade ${p.priority})</option>`).join('')}
+            </select>
+          </div>
+          <div class="field-row">
+            <div class="field-group">
+              <label class="field-label">Data de início *</label>
+              <input class="field-input" id="ct-starts" type="date" value="${contrato?contrato.starts_at.slice(0,10):new Date().toISOString().slice(0,10)}" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Data de fim *</label>
+              <input class="field-input" id="ct-ends" type="date" value="${contrato?contrato.ends_at.slice(0,10):''}" />
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Notas internas</label>
+            <textarea class="field-input" id="ct-notes" rows="2" placeholder="Observações internas sobre este contrato...">${contrato&&contrato.notes?escHtml(contrato.notes):''}</textarea>
+          </div>
+        `, `
+          <button class="btn btn-gray" id="ct-cancel">Cancelar</button>
+          <button class="btn btn-orange" id="ct-save">Salvar Contrato</button>
+        `, true);
+
+        document.getElementById('ct-cancel').addEventListener('click', closeModal);
+
+        if (isNew) {
+          const searchInput = document.getElementById('ct-search');
+          const resultsDiv  = document.getElementById('ct-search-results');
+          const placeIdHidden = document.getElementById('ct-place-id');
+          const placeNameHidden = document.getElementById('ct-place-name');
+
+          searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            const q = searchInput.value.trim();
+            if (q.length < 2) { resultsDiv.innerHTML = ''; return; }
+            searchTimeout = setTimeout(async () => {
+              resultsDiv.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Buscando…</div>';
+              try {
+                const city = document.getElementById('ct-city').value;
+                const url  = `/admin/sponsorship/search-places?q=${encodeURIComponent(q)}${city?'&city='+encodeURIComponent(city):''}`;
+                const res  = await apiFetch(url);
+                const d    = await res.json();
+                searchResults = d.places || [];
+                if (searchResults.length === 0) {
+                  resultsDiv.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Nenhum resultado</div>';
+                } else {
+                  resultsDiv.innerHTML = searchResults.map((p,i) => `
+                    <div class="item-row search-result-item" data-idx="${i}" style="cursor:pointer;padding:10px 12px">
+                      <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:600">${escHtml(p.name)}</div>
+                        <div style="font-size:11px;color:var(--text-muted)">${escHtml(p.formatted_address||'')}</div>
+                      </div>
+                      <span style="font-size:11px;color:var(--primary)">Selecionar →</span>
+                    </div>
+                  `).join('');
+                  resultsDiv.querySelectorAll('.search-result-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                      const idx = parseInt(item.dataset.idx, 10);
+                      const place = searchResults[idx];
+                      placeIdHidden.value = place.place_id;
+                      placeNameHidden.value = place.name;
+                      searchInput.value = place.name;
+                      resultsDiv.innerHTML = `<div class="info-box" style="margin-top:4px"><span>✅ Selecionado: <strong>${escHtml(place.name)}</strong></span></div>`;
+                    });
+                  });
+                }
+              } catch(e) {
+                resultsDiv.innerHTML = `<div style="font-size:12px;color:var(--red)">Erro: ${escHtml(e.message)}</div>`;
+              }
+            }, 350);
+          });
+        }
+
+        document.getElementById('ct-save').addEventListener('click', async () => {
+          const planId  = document.getElementById('ct-plan').value;
+          const starts  = document.getElementById('ct-starts').value;
+          const ends    = document.getElementById('ct-ends').value;
+          const notes   = document.getElementById('ct-notes').value.trim() || null;
+          const placeId   = isNew ? document.getElementById('ct-place-id').value   : contrato.place_id;
+          const placeName = isNew ? document.getElementById('ct-place-name').value : contrato.place_name;
+
+          if (isNew && !placeId)  { alert('Selecione um estabelecimento.'); return; }
+          if (!planId) { alert('Selecione um plano.'); return; }
+          if (!starts || !ends)   { alert('Informe as datas de início e fim.'); return; }
+          if (new Date(ends) <= new Date(starts)) { alert('A data de fim deve ser posterior ao início.'); return; }
+
+          const saveBtn = document.getElementById('ct-save');
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Salvando…';
+          try {
+            const body = {
+              place_id: placeId,
+              place_name: placeName,
+              plan_id: planId,
+              starts_at: new Date(starts).toISOString(),
+              ends_at: new Date(ends+'T23:59:59').toISOString(),
+              notes,
+            };
+            const res = contrato
+              ? await apiFetch(`/admin/sponsorship/contracts/${contrato.id}`, { method: 'PATCH', body: JSON.stringify(body) })
+              : await apiFetch('/admin/sponsorship/contracts', { method: 'POST', body: JSON.stringify(body) });
+            const d = await res.json();
+            if (!res.ok) throw new Error(d.error || 'Erro');
+            closeModal();
+            await renderContratosTab();
+          } catch(e) {
+            alert('Erro: ' + e.message);
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Salvar Contrato';
+          }
+        });
+      }
+
+      // ===== ABA: RELATÓRIO =====
+      async function renderRelatorioTab() {
+        const el = document.getElementById('parceiro-tab-content');
+        el.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+
+        try {
+          const res = await apiFetch('/admin/sponsorship/contracts?status=ativo');
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Erro');
+          const ativos = data.contracts || [];
+
+          el.innerHTML = `
+            <div class="info-box" style="margin-bottom:20px">
+              <span class="info-box-icon">ℹ️</span>
+              <span>Métricas de impressões e acessos são acumuladas desde a criação do contrato. Impressões = vezes que o local apareceu nos resultados de busca. Acessos = vezes que o detalhe do local foi aberto.</span>
+            </div>
+            <div class="field-group" style="max-width:400px;margin-bottom:20px">
+              <label class="field-label">Selecionar contrato ativo</label>
+              <select class="field-input" id="relatorio-contrato-select">
+                <option value="">Selecione um contrato…</option>
+                ${ativos.map(c => `<option value="${c.id}">${escHtml(c.place_name)} — ${escHtml(c.plan_name)}</option>`).join('')}
+              </select>
+            </div>
+            <div id="relatorio-content"></div>
+          `;
+
+          document.getElementById('relatorio-contrato-select').addEventListener('change', async (e) => {
+            const id = e.target.value;
+            const rcontent = document.getElementById('relatorio-content');
+            if (!id) { rcontent.innerHTML = ''; return; }
+            rcontent.innerHTML = '<div class="spinner-wrap" style="height:100px"><div class="spinner"></div></div>';
+            try {
+              const perfRes = await apiFetch(`/admin/sponsorship/contracts/${id}/performance`);
+              const perfData = await perfRes.json();
+              if (!perfRes.ok) throw new Error(perfData.error || 'Erro');
+              const p = perfData.performance;
+              const contract = ativos.find(c => c.id === id);
+              rcontent.innerHTML = `
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-bottom:20px">
+                  <div class="card" style="text-align:center;border-top:3px solid #2563EB">
+                    <div style="font-size:32px;font-weight:700;color:#2563EB">${p.impressions.toLocaleString('pt-BR')}</div>
+                    <div style="font-size:13px;color:var(--text-muted);margin-top:4px">👁️ Impressões (busca)</div>
+                  </div>
+                  <div class="card" style="text-align:center;border-top:3px solid #059669">
+                    <div style="font-size:32px;font-weight:700;color:#059669">${p.detail_accesses.toLocaleString('pt-BR')}</div>
+                    <div style="font-size:13px;color:var(--text-muted);margin-top:4px">🖱️ Acessos ao detalhe</div>
+                  </div>
+                  <div class="card" style="text-align:center;border-top:3px solid var(--primary)">
+                    <div style="font-size:32px;font-weight:700;color:var(--primary)">${p.impressions > 0 ? ((p.detail_accesses / p.impressions * 100).toFixed(1) + '%') : '—'}</div>
+                    <div style="font-size:13px;color:var(--text-muted);margin-top:4px">📈 CTR (acesso/impressão)</div>
+                  </div>
+                </div>
+                ${contract ? `
+                  <div class="card card-sm">
+                    <div style="font-size:13px;font-weight:600;margin-bottom:10px">Detalhes do Contrato</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
+                      <div><span style="color:var(--text-muted)">Estabelecimento:</span> <strong>${escHtml(contract.place_name)}</strong></div>
+                      <div><span style="color:var(--text-muted)">Plano:</span> <strong>${escHtml(contract.plan_name)}</strong></div>
+                      <div><span style="color:var(--text-muted)">Início:</span> ${new Date(contract.starts_at).toLocaleDateString('pt-BR')}</div>
+                      <div><span style="color:var(--text-muted)">Fim:</span> ${new Date(contract.ends_at).toLocaleDateString('pt-BR')}</div>
+                      <div><span style="color:var(--text-muted)">Prioridade:</span> ${contract.plan_priority}</div>
+                    </div>
+                  </div>
+                ` : ''}
+              `;
+            } catch(e) {
+              rcontent.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
+            }
+          });
+        } catch(e) {
+          el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
+        }
       }
 
       // =====================================================================
@@ -3063,7 +3565,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         if (!currentToken) { showLogin(); return; }
 
         try {
-          const res  = await apiFetch('/admin/auth/me');
+          const res  = await apiFetch('/backoffice/auth/me');
           if (!res.ok) throw new Error('unauthorized');
           const data = await res.json();
           adminUser  = data.user;

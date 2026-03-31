@@ -325,6 +325,12 @@ export default function PlaceDetailsScreen() {
       </View>
 
       <View style={styles.content}>
+        {place.is_sponsored && (
+          <View style={styles.sponsoredBadge}>
+            <Ionicons name="star" size={12} color="#FF6B35" />
+            <Text style={styles.sponsoredText}>Parceiro KidSpot</Text>
+          </View>
+        )}
         <Text style={styles.placeName}>{place.name}</Text>
 
         <View style={styles.metaRow}>
@@ -605,6 +611,23 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     gap: 12,
+  },
+  sponsoredBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#FFF3EF",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    alignSelf: "flex-start",
+    marginBottom: 8,
+  },
+  sponsoredText: {
+    color: "#FF6B35",
+    fontSize: 12,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
   },
   placeName: {
     fontSize: 22,

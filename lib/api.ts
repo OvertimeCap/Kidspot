@@ -15,6 +15,7 @@ export type PlaceDetails = MinimalPlace & {
   opening_hours?: { open_now?: boolean; weekday_text?: string[] };
   website?: string;
   formatted_phone_number?: string;
+  is_sponsored?: boolean;
 };
 
 export type KidFlags = {
@@ -94,6 +95,7 @@ export type PlaceWithScore = {
   kid_score_breakdown: KidScoreBreakdown;
   distance_meters?: number;
   family_highlight?: string;
+  is_sponsored?: boolean;
 };
 
 export function getPhotoUrl(photoReference: string, maxwidth = 400): string {

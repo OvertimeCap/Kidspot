@@ -70,8 +70,22 @@ import {
   addPlacePhoto,
   setCoverPhoto,
   deletePlacePhoto,
+  listSponsorshipPlans,
+  getSponsorshipPlanById,
+  createSponsorshipPlan,
+  updateSponsorshipPlan,
+  deleteSponsorshipPlan,
+  listSponsorshipContracts,
+  getSponsorshipContractById,
+  createSponsorshipContract,
+  updateSponsorshipContract,
+  expireStaleContracts,
+  getActiveSponsoredPlaceIds,
+  incrementImpressions,
+  incrementDetailAccess,
+  getSponsorshipPerformance,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
 import { invalidatePromptCache } from "./ai-review-analysis";
@@ -427,8 +441,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const places = await searchPlaces(parsed.data);
-      res.json({ places });
+      const [places, sponsoredMap] = await Promise.all([
+        searchPlaces(parsed.data),
+        getActiveSponsoredPlaceIds(),
+      ]);
+
+      const augmented = places.map((p) => ({
+        ...p,
+        is_sponsored: sponsoredMap.has(p.place_id),
+      }));
+
+      if (sponsoredMap.size > 0) {
+        augmented.sort((a, b) => {
+          const aPrio = sponsoredMap.get(a.place_id) ?? -1;
+          const bPrio = sponsoredMap.get(b.place_id) ?? -1;
+          if (bPrio !== aPrio) return bPrio - aPrio;
+          return 0;
+        });
+      }
+
+      const placeIds = augmented.map((p) => p.place_id);
+      incrementImpressions(placeIds).catch(() => {});
+
+      res.json({ places: augmented });
     } catch (err) {
       console.error("Places search error:", err);
       res.status(500).json({ error: (err as Error).message });
@@ -473,8 +508,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const details = await getPlaceDetails(placeId);
-      res.json({ place: details });
+      const [details, sponsoredMap] = await Promise.all([
+        getPlaceDetails(placeId),
+        getActiveSponsoredPlaceIds(),
+      ]);
+      incrementDetailAccess(placeId).catch(() => {});
+      res.json({ place: { ...details, is_sponsored: sponsoredMap.has(placeId) } });
     } catch (err) {
       console.error("Places details error:", err);
       res.status(500).json({ error: (err as Error).message });
@@ -2725,6 +2764,164 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     },
   );
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Sponsorship Plans                                           */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/sponsorship/plans", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+    try {
+      const plans = await listSponsorshipPlans();
+      res.json({ plans });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/api/admin/sponsorship/plans", requireBackofficeAuth, trackBackofficeActivity, withAudit("create", "sponsorship_plans"), async (req: AuthRequest, res: Response) => {
+    const parsed = insertSponsorshipPlanSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const plan = await createSponsorshipPlan({
+        name: parsed.data.name,
+        priority: parsed.data.priority,
+        reference_price: parsed.data.reference_price,
+        benefits: parsed.data.benefits ?? null,
+      });
+      res.status(201).json({ plan });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/api/admin/sponsorship/plans/:id", requireBackofficeAuth, trackBackofficeActivity, withAudit("update", "sponsorship_plans"), async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    const parsed = insertSponsorshipPlanSchema.partial().safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const plan = await updateSponsorshipPlan(id, {
+        ...parsed.data,
+        reference_price: parsed.data.reference_price,
+      });
+      if (!plan) { res.status(404).json({ error: "Plano não encontrado" }); return; }
+      res.json({ plan });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/api/admin/sponsorship/plans/:id", requireBackofficeAuth, trackBackofficeActivity, withAudit("delete", "sponsorship_plans"), async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    try {
+      const ok = await deleteSponsorshipPlan(id);
+      if (!ok) { res.status(404).json({ error: "Plano não encontrado" }); return; }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Sponsorship Contracts                                        */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/sponsorship/contracts", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+    const status = req.query.status as string | undefined;
+    const place_id = req.query.place_id as string | undefined;
+    try {
+      await expireStaleContracts();
+      const contracts = await listSponsorshipContracts({ status, place_id });
+      res.json({ contracts });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/api/admin/sponsorship/contracts", requireBackofficeAuth, trackBackofficeActivity, withAudit("create", "sponsorship_contracts"), async (req: AuthRequest, res: Response) => {
+    const parsed = insertSponsorshipContractSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const contract = await createSponsorshipContract({
+        place_id: parsed.data.place_id,
+        place_name: parsed.data.place_name,
+        plan_id: parsed.data.plan_id,
+        starts_at: new Date(parsed.data.starts_at),
+        ends_at: new Date(parsed.data.ends_at),
+        notes: parsed.data.notes ?? null,
+      });
+      res.status(201).json({ contract });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/api/admin/sponsorship/contracts/:id", requireBackofficeAuth, trackBackofficeActivity, withAudit("update", "sponsorship_contracts"), async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    const updateSchema = z.object({
+      plan_id: z.string().optional(),
+      starts_at: z.string().datetime().optional(),
+      ends_at: z.string().datetime().optional(),
+      status: z.enum(["ativo", "expirado", "cancelado"]).optional(),
+      notes: z.string().optional().nullable(),
+    });
+    const parsed = updateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const contract = await updateSponsorshipContract(id, {
+        ...parsed.data,
+        starts_at: parsed.data.starts_at ? new Date(parsed.data.starts_at) : undefined,
+        ends_at: parsed.data.ends_at ? new Date(parsed.data.ends_at) : undefined,
+      });
+      if (!contract) { res.status(404).json({ error: "Contrato não encontrado" }); return; }
+      res.json({ contract });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/admin/sponsorship/contracts/:id/performance", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    try {
+      const perf = await getSponsorshipPerformance(id);
+      if (!perf) { res.status(404).json({ error: "Contrato não encontrado" }); return; }
+      res.json({ performance: perf });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Search approved places for sponsorship                       */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/sponsorship/search-places", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
+    const q = (req.query.q as string) ?? "";
+    const city = (req.query.city as string) ?? "";
+
+    if (!q || q.trim().length < 2) {
+      res.status(400).json({ error: "Informe pelo menos 2 caracteres" });
+      return;
+    }
+
+    try {
+      const results = await textSearchClaimable(q.trim(), city.trim());
+      res.json({ places: results.slice(0, 10) });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;

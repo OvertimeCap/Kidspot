@@ -120,6 +120,8 @@ export const placesKidspot = pgTable("places_kidspot", {
   lng: numeric("lng").notNull(),
   tags: jsonb("tags"),
   status: placeStatusEnum("status").notNull().default("aprovado"),
+  impression_count: integer("impression_count").notNull().default(0),
+  detail_access_count: integer("detail_access_count").notNull().default(0),
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -467,6 +469,62 @@ export type InsertCity = z.infer<typeof insertCitySchema>;
 export type PipelineRun = typeof pipelineRuns.$inferSelect;
 export type InsertPipelineRun = typeof pipelineRuns.$inferInsert;
 export type PlaceStatus = "pendente" | "aprovado" | "rejeitado";
+
+export const sponsorshipContractStatusEnum = pgEnum("sponsorship_contract_status", [
+  "ativo",
+  "expirado",
+  "cancelado",
+]);
+
+export const sponsorshipPlans = pgTable("sponsorship_plans", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  priority: integer("priority").notNull().default(0),
+  reference_price: numeric("reference_price").notNull().default("0"),
+  benefits: text("benefits"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const sponsorshipContracts = pgTable("sponsorship_contracts", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  place_id: text("place_id").notNull().references(() => placesKidspot.place_id),
+  place_name: text("place_name").notNull(),
+  plan_id: varchar("plan_id").notNull().references(() => sponsorshipPlans.id),
+  starts_at: timestamp("starts_at").notNull(),
+  ends_at: timestamp("ends_at").notNull(),
+  status: sponsorshipContractStatusEnum("status").notNull().default("ativo"),
+  notes: text("notes"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type SponsorshipPlan = typeof sponsorshipPlans.$inferSelect;
+export type InsertSponsorshipPlan = typeof sponsorshipPlans.$inferInsert;
+export type SponsorshipContract = typeof sponsorshipContracts.$inferSelect;
+export type InsertSponsorshipContract = typeof sponsorshipContracts.$inferInsert;
+export type SponsorshipContractStatus = "ativo" | "expirado" | "cancelado";
+
+export const insertSponsorshipPlanSchema = z.object({
+  name: z.string().min(1).max(100),
+  priority: z.number().int().min(0),
+  reference_price: z.number().min(0),
+  benefits: z.string().optional().nullable(),
+});
+
+export const insertSponsorshipContractSchema = z.object({
+  place_id: z.string().min(1),
+  place_name: z.string().min(1),
+  plan_id: z.string().min(1),
+  starts_at: z.string().datetime(),
+  ends_at: z.string().datetime(),
+  status: z.enum(["ativo", "expirado", "cancelado"]).optional(),
+  notes: z.string().optional().nullable(),
+});
 
 export const aiProviderEnum = pgEnum("ai_provider", [
   "openai",

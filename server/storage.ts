@@ -15,6 +15,8 @@ import {
   cities,
   placePhotos,
   placeKidspotMeta,
+  sponsorshipPlans,
+  sponsorshipContracts,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -37,6 +39,9 @@ import {
   type InsertCity,
   type PlacePhoto,
   type CurationStatus,
+  type SponsorshipPlan,
+  type SponsorshipContract,
+  type SponsorshipContractStatus,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -1271,4 +1276,243 @@ export async function deletePlacePhoto(photoId: string): Promise<void> {
     .update(placePhotos)
     .set({ deleted: true, is_cover: false })
     .where(eq(placePhotos.id, photoId));
+}
+
+/* ------------------------------------------------------------------ */
+/* Sponsorship Plans                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function listSponsorshipPlans(): Promise<SponsorshipPlan[]> {
+  return db.select().from(sponsorshipPlans).orderBy(desc(sponsorshipPlans.priority));
+}
+
+export async function getSponsorshipPlanById(id: string): Promise<SponsorshipPlan | null> {
+  const [plan] = await db.select().from(sponsorshipPlans).where(eq(sponsorshipPlans.id, id)).limit(1);
+  return plan ?? null;
+}
+
+export async function createSponsorshipPlan(data: {
+  name: string;
+  priority: number;
+  reference_price: number;
+  benefits?: string | null;
+}): Promise<SponsorshipPlan> {
+  const [plan] = await db
+    .insert(sponsorshipPlans)
+    .values({
+      name: data.name,
+      priority: data.priority,
+      reference_price: String(data.reference_price),
+      benefits: data.benefits ?? null,
+    })
+    .returning();
+  return plan;
+}
+
+export async function updateSponsorshipPlan(
+  id: string,
+  data: Partial<{ name: string; priority: number; reference_price: number; benefits: string | null }>,
+): Promise<SponsorshipPlan | null> {
+  const updates: Record<string, unknown> = { updated_at: new Date() };
+  if (data.name !== undefined) updates.name = data.name;
+  if (data.priority !== undefined) updates.priority = data.priority;
+  if (data.reference_price !== undefined) updates.reference_price = String(data.reference_price);
+  if (data.benefits !== undefined) updates.benefits = data.benefits;
+
+  const [updated] = await db
+    .update(sponsorshipPlans)
+    .set(updates)
+    .where(eq(sponsorshipPlans.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function deleteSponsorshipPlan(id: string): Promise<boolean> {
+  const result = await db.delete(sponsorshipPlans).where(eq(sponsorshipPlans.id, id)).returning();
+  return result.length > 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sponsorship Contracts                                                */
+/* ------------------------------------------------------------------ */
+
+export type ContractWithPlan = SponsorshipContract & {
+  plan_name: string;
+  plan_priority: number;
+};
+
+export async function listSponsorshipContracts(opts?: {
+  status?: string;
+  place_id?: string;
+}): Promise<ContractWithPlan[]> {
+  const conditions = [];
+  if (opts?.status) conditions.push(eq(sponsorshipContracts.status, opts.status as SponsorshipContractStatus));
+  if (opts?.place_id) conditions.push(eq(sponsorshipContracts.place_id, opts.place_id));
+
+  const rows = await db
+    .select({
+      id: sponsorshipContracts.id,
+      place_id: sponsorshipContracts.place_id,
+      place_name: sponsorshipContracts.place_name,
+      plan_id: sponsorshipContracts.plan_id,
+      starts_at: sponsorshipContracts.starts_at,
+      ends_at: sponsorshipContracts.ends_at,
+      status: sponsorshipContracts.status,
+      notes: sponsorshipContracts.notes,
+      created_at: sponsorshipContracts.created_at,
+      updated_at: sponsorshipContracts.updated_at,
+      plan_name: sponsorshipPlans.name,
+      plan_priority: sponsorshipPlans.priority,
+    })
+    .from(sponsorshipContracts)
+    .innerJoin(sponsorshipPlans, eq(sponsorshipContracts.plan_id, sponsorshipPlans.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(sponsorshipContracts.created_at));
+
+  return rows;
+}
+
+export async function getSponsorshipContractById(id: string): Promise<ContractWithPlan | null> {
+  const [row] = await db
+    .select({
+      id: sponsorshipContracts.id,
+      place_id: sponsorshipContracts.place_id,
+      place_name: sponsorshipContracts.place_name,
+      plan_id: sponsorshipContracts.plan_id,
+      starts_at: sponsorshipContracts.starts_at,
+      ends_at: sponsorshipContracts.ends_at,
+      status: sponsorshipContracts.status,
+      notes: sponsorshipContracts.notes,
+      created_at: sponsorshipContracts.created_at,
+      updated_at: sponsorshipContracts.updated_at,
+      plan_name: sponsorshipPlans.name,
+      plan_priority: sponsorshipPlans.priority,
+    })
+    .from(sponsorshipContracts)
+    .innerJoin(sponsorshipPlans, eq(sponsorshipContracts.plan_id, sponsorshipPlans.id))
+    .where(eq(sponsorshipContracts.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function createSponsorshipContract(data: {
+  place_id: string;
+  place_name: string;
+  plan_id: string;
+  starts_at: Date;
+  ends_at: Date;
+  notes?: string | null;
+}): Promise<SponsorshipContract> {
+  const [contract] = await db
+    .insert(sponsorshipContracts)
+    .values({
+      place_id: data.place_id,
+      place_name: data.place_name,
+      plan_id: data.plan_id,
+      starts_at: data.starts_at,
+      ends_at: data.ends_at,
+      notes: data.notes ?? null,
+    })
+    .returning();
+  return contract;
+}
+
+export async function updateSponsorshipContract(
+  id: string,
+  data: Partial<{ plan_id: string; starts_at: Date; ends_at: Date; status: SponsorshipContractStatus; notes: string | null }>,
+): Promise<SponsorshipContract | null> {
+  const updates: Record<string, unknown> = { updated_at: new Date() };
+  if (data.plan_id !== undefined) updates.plan_id = data.plan_id;
+  if (data.starts_at !== undefined) updates.starts_at = data.starts_at;
+  if (data.ends_at !== undefined) updates.ends_at = data.ends_at;
+  if (data.status !== undefined) updates.status = data.status;
+  if (data.notes !== undefined) updates.notes = data.notes;
+
+  const [updated] = await db
+    .update(sponsorshipContracts)
+    .set(updates)
+    .where(eq(sponsorshipContracts.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function expireStaleContracts(): Promise<number> {
+  const now = new Date();
+  const result = await db
+    .update(sponsorshipContracts)
+    .set({ status: "expirado", updated_at: now })
+    .where(
+      and(
+        eq(sponsorshipContracts.status, "ativo"),
+        lt(sponsorshipContracts.ends_at, now),
+      ),
+    )
+    .returning();
+  return result.length;
+}
+
+export async function getActiveSponsoredPlaceIds(): Promise<Map<string, number>> {
+  const now = new Date();
+  const rows = await db
+    .select({
+      place_id: sponsorshipContracts.place_id,
+      priority: sponsorshipPlans.priority,
+    })
+    .from(sponsorshipContracts)
+    .innerJoin(sponsorshipPlans, eq(sponsorshipContracts.plan_id, sponsorshipPlans.id))
+    .where(
+      and(
+        eq(sponsorshipContracts.status, "ativo"),
+        lte(sponsorshipContracts.starts_at, now),
+        gt(sponsorshipContracts.ends_at, now),
+      ),
+    );
+
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const existing = map.get(row.place_id);
+    if (existing === undefined || row.priority > existing) {
+      map.set(row.place_id, row.priority);
+    }
+  }
+  return map;
+}
+
+export async function incrementImpressions(placeIds: string[]): Promise<void> {
+  if (placeIds.length === 0) return;
+  await db
+    .update(placesKidspot)
+    .set({ impression_count: sql`${placesKidspot.impression_count} + 1` })
+    .where(inArray(placesKidspot.place_id, placeIds));
+}
+
+export async function incrementDetailAccess(placeId: string): Promise<void> {
+  await db
+    .update(placesKidspot)
+    .set({ detail_access_count: sql`${placesKidspot.detail_access_count} + 1` })
+    .where(eq(placesKidspot.place_id, placeId));
+}
+
+export async function getSponsorshipPerformance(contractId: string): Promise<{
+  impressions: number;
+  detail_accesses: number;
+  avg_position: number | null;
+} | null> {
+  const contract = await getSponsorshipContractById(contractId);
+  if (!contract) return null;
+
+  const [stats] = await db
+    .select({
+      impression_count: placesKidspot.impression_count,
+      detail_access_count: placesKidspot.detail_access_count,
+    })
+    .from(placesKidspot)
+    .where(eq(placesKidspot.place_id, contract.place_id))
+    .limit(1);
+
+  return {
+    impressions: stats?.impression_count ?? 0,
+    detail_accesses: stats?.detail_access_count ?? 0,
+    avg_position: null,
+  };
 }

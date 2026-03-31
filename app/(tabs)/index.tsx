@@ -79,6 +79,12 @@ function PlaceCard({
         <View style={styles.categoryBadge}>
           <Text style={styles.categoryText}>{category}</Text>
         </View>
+        {place.is_sponsored && (
+          <View style={styles.sponsoredBadge}>
+            <Ionicons name="star" size={10} color="#FF6B35" />
+            <Text style={styles.sponsoredText}>Parceiro</Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.cardBody}>
@@ -587,6 +593,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     fontFamily: "Inter_600SemiBold",
+  },
+  sponsoredBadge: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  sponsoredText: {
+    color: "#FF6B35",
+    fontSize: 10,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
   },
   cardBody: {
     padding: 14,
