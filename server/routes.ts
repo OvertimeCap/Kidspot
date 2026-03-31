@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool, db } from "./db";
 import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace } from "./google-places";
 import { sendInviteEmail } from "./email";
+import { runPipelineForCity, runPipelineForAllCities } from "./pipeline";
 import {
   createReview,
   getReviewsForPlace,
@@ -60,11 +61,11 @@ import {
   toggleCityActive,
   deleteCity,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable } from "./google-places";
 import { invalidatePromptCache } from "./ai-review-analysis";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql as sqlExpr } from "drizzle-orm";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 
@@ -2047,17 +2048,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /* ------------------------------------------------------------------ */
-  /* Admin — Cities (Módulo 9)                                           */
+  /* Admin — Cities (Módulo 9 + Módulo 7)                               */
   /* ------------------------------------------------------------------ */
 
   const updateCitySchema = insertCitySchema.partial();
 
-  app.get("/api/admin/cities", requireAuth, async (req: AuthRequest, res: Response) => {
-    const caller = await getUserById(req.user!.userId);
-    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
-      res.status(403).json({ error: "Acesso negado" });
-      return;
-    }
+  app.get("/api/admin/cities", requireBackofficeAuth, trackBackofficeActivity, async (req: AuthRequest, res: Response) => {
     const search = req.query.search as string | undefined;
     try {
       const cityList = await listCities(search);
@@ -2068,90 +2064,184 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/cities", requireAuth, async (req: AuthRequest, res: Response) => {
-    const caller = await getUserById(req.user!.userId);
-    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
-      res.status(403).json({ error: "Acesso negado" });
-      return;
-    }
-    const parsed = insertCitySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
-    }
-    try {
-      const city = await createCity(parsed.data);
-      res.status(201).json({ city });
-    } catch (err) {
-      console.error("Create city error:", err);
-      res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.patch("/api/admin/cities/:id", requireAuth, async (req: AuthRequest, res: Response) => {
-    const caller = await getUserById(req.user!.userId);
-    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
-      res.status(403).json({ error: "Acesso negado" });
-      return;
-    }
-    const parsed = updateCitySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
-    }
-    const cityId = req.params.id as string;
-    try {
-      const city = await updateCity(cityId, parsed.data);
-      if (!city) {
-        res.status(404).json({ error: "Cidade não encontrada" });
+  app.post("/api/admin/cities", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = insertCitySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
         return;
       }
-      res.json({ city });
-    } catch (err) {
-      console.error("Update city error:", err);
-      res.status(500).json({ error: (err as Error).message });
+      try {
+        const city = await createCity(parsed.data);
+        res.status(201).json({ city });
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg.includes("unique")) {
+          res.status(409).json({ error: "Cidade já cadastrada" });
+          return;
+        }
+        console.error("Create city error:", err);
+        res.status(500).json({ error: msg });
+      }
     }
-  });
+  );
 
-  app.patch("/api/admin/cities/:id/toggle", requireAuth, async (req: AuthRequest, res: Response) => {
-    const caller = await getUserById(req.user!.userId);
-    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
-      res.status(403).json({ error: "Acesso negado" });
-      return;
-    }
-    const cityId = req.params.id as string;
-    try {
-      const city = await toggleCityActive(cityId);
-      if (!city) {
-        res.status(404).json({ error: "Cidade não encontrada" });
+  app.patch("/api/admin/cities/:id", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = updateCitySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
         return;
       }
-      res.json({ city });
-    } catch (err) {
-      console.error("Toggle city error:", err);
-      res.status(500).json({ error: (err as Error).message });
+      const cityId = req.params.id as string;
+      try {
+        const city = await updateCity(cityId, parsed.data);
+        if (!city) {
+          res.status(404).json({ error: "Cidade não encontrada" });
+          return;
+        }
+        res.json({ city });
+      } catch (err) {
+        console.error("Update city error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
     }
+  );
+
+  app.patch("/api/admin/cities/:id/toggle", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const cityId = req.params.id as string;
+      try {
+        const city = await toggleCityActive(cityId);
+        if (!city) {
+          res.status(404).json({ error: "Cidade não encontrada" });
+          return;
+        }
+        res.json({ city });
+      } catch (err) {
+        console.error("Toggle city error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  app.delete("/api/admin/cities/:id", requireBackofficeAuth, requireRole("super_admin", "admin"), trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const cityId = req.params.id as string;
+      try {
+        const deleted = await deleteCity(cityId);
+        if (!deleted) {
+          res.status(404).json({ error: "Cidade não encontrada" });
+          return;
+        }
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Delete city error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Pipeline control                                                    */
+  /* ------------------------------------------------------------------ */
+
+  const pipelineRunSchema = z.object({
+    city_id: z.string().optional(),
   });
 
-  app.delete("/api/admin/cities/:id", requireAuth, async (req: AuthRequest, res: Response) => {
-    const caller = await getUserById(req.user!.userId);
-    if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
-      res.status(403).json({ error: "Acesso negado" });
-      return;
-    }
-    const cityId = req.params.id as string;
-    try {
-      const deleted = await deleteCity(cityId);
-      if (!deleted) {
-        res.status(404).json({ error: "Cidade não encontrada" });
+  app.post("/api/admin/pipeline/run", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = pipelineRunSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
         return;
       }
-      res.json({ ok: true });
-    } catch (err) {
-      console.error("Delete city error:", err);
-      res.status(500).json({ error: (err as Error).message });
+
+      const { city_id } = parsed.data;
+
+      try {
+        if (city_id) {
+          const result = await runPipelineForCity(city_id);
+          res.json({ results: [result] });
+        } else {
+          const results = await runPipelineForAllCities();
+          res.json({ results });
+        }
+      } catch (err) {
+        console.error("Pipeline run error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
     }
+  );
+
+  app.get("/api/admin/pipeline/runs", requireBackofficeAuth, trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 200);
+      const offset = parseInt((req.query.offset as string) || "0", 10);
+
+      try {
+        const [rows, countResult] = await Promise.all([
+          db.select().from(pipelineRuns).orderBy(desc(pipelineRuns.started_at)).limit(limit).offset(offset),
+          db.select({ count: sqlExpr<number>`count(*)::int` }).from(pipelineRuns),
+        ]);
+        res.json({ runs: rows, total: countResult[0]?.count ?? 0 });
+      } catch (err) {
+        console.error("List pipeline runs error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Places curation (status management)                                 */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/admin/places/pending", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 200);
+      const offset = parseInt((req.query.offset as string) || "0", 10);
+      try {
+        const [rows, countResult] = await Promise.all([
+          db.select().from(placesKidspot).where(eq(placesKidspot.status, "pendente")).orderBy(desc(placesKidspot.created_at)).limit(limit).offset(offset),
+          db.select({ count: sqlExpr<number>`count(*)::int` }).from(placesKidspot).where(eq(placesKidspot.status, "pendente")),
+        ]);
+        res.json({ places: rows, total: countResult[0]?.count ?? 0 });
+      } catch (err) {
+        console.error("List pending places error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  const updatePlaceStatusSchema = z.object({
+    status: z.enum(["aprovado", "rejeitado"]),
   });
+
+  app.patch("/api/admin/places/:place_id/status", requireBackofficeAuth, requireRole("super_admin", "admin", "curador"), trackBackofficeActivity,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = updatePlaceStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const [updated] = await db.update(placesKidspot)
+          .set({ status: parsed.data.status })
+          .where(eq(placesKidspot.place_id, req.params.place_id as string))
+          .returning();
+        if (!updated) {
+          res.status(404).json({ error: "Local não encontrado" });
+          return;
+        }
+        res.json({ place: updated });
+      } catch (err) {
+        console.error("Update place status error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
 
   const httpServer = createServer(app);
   return httpServer;

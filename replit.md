@@ -1,48 +1,54 @@
 # KidSpot
 
 ## Overview
-KidSpot is a mobile application designed to help families discover kid-friendly locations nearby. The project aims to provide a comprehensive platform for finding places like parks, restaurants, and entertainment venues suitable for children, enhancing family outings. It incorporates advanced filtering, a unique "KidScore" ranking system, and community-driven insights to offer personalized recommendations.
+KidSpot is a full-stack mobile application (Expo/React Native + Express/PostgreSQL) designed to help families discover kid-friendly locations nearby. The project aims to provide a comprehensive platform for finding places like parks, restaurants, and entertainment venues suitable for children, incorporating advanced filtering, a unique "KidScore" ranking system, and AI-powered insights.
 
-The vision for KidSpot includes becoming the go-to resource for parents seeking family-oriented places, fostering a community around shared experiences, and continually enriching its database through user contributions and AI-powered analysis. The project emphasizes user-friendly interfaces, reliable data, and a robust backend to support a growing user base and expand its service offerings.
+The vision for KidSpot includes becoming the go-to resource for parents seeking family-oriented places, fostering a community around shared experiences, and continually enriching its database through user contributions and an automated AI pipeline for discovering and validating new locations.
 
 ## User Preferences
 I prefer clear, concise explanations and direct answers.
 I value an iterative development approach with frequent, small updates.
 Please ask for confirmation before implementing major structural changes or adding new external dependencies.
 I prefer detailed explanations for complex logic or architectural decisions.
-Do not make changes to the `app/backoffice-rbac.tsx` file as it has been removed.
-Do not make changes to the `app/admin-*.tsx` files as they have been removed.
 
 ## System Architecture
 The KidSpot application is built with a mobile-first approach using Expo (React Native) for the frontend and an Express.js server for the backend. Data persistence is handled by PostgreSQL with Drizzle ORM.
 
 ### Frontend
-The frontend uses Expo Router for navigation and `@tanstack/react-query` for data fetching and state management, leveraging TypeScript for type safety.
+The frontend uses Expo (React Native) with Expo Router for navigation and `@tanstack/react-query` for data fetching and state management, leveraging TypeScript for type safety. Authentication state is managed via a global `AuthProvider` using JWT and `AsyncStorage`.
 
 ### Backend
-The Express.js backend, written in TypeScript, serves as the API layer. It orchestrates data retrieval from various sources, applies business logic, and manages user authentication and data storage. Key components include:
--   **Google Places Integration:** Fetches and processes location data.
--   **Foursquare Places Integration:** Enriches place data with additional ratings and popularity metrics.
--   **OpenAI Integration:** Analyzes place reviews to identify family-friendly signals.
--   **KidScore Calculation:** A proprietary algorithm that ranks places based on various kid-friendly criteria (e.g., amenities, safety, user reviews). This involves multiple passes for initial scoring, enrichment, and final score adjustment.
--   **Authentication:** JWT-based authentication system with four user roles: `admin`, `colaborador`, `parceiro`, and `usuario`. Authentication state is managed via AsyncStorage on the client side.
--   **Admin Panel:** A separate web-based admin panel (`/admin`) accessible via Express, offering modules for user management, feedback processing, AI prompt configuration, KidScore rule adjustments, custom criteria definition, app filter management, and city configuration. This panel is a pure HTML/JS single-page application.
--   **Backoffice RBAC System:** A separate, internal role-based access control system (`/api/backoffice/*`) with `super_admin`, `admin`, `curador`, and `analista` roles for managing the platform's operational aspects. This system does not have a direct mobile UI but handles backend administrative tasks.
+The Express.js backend, written in TypeScript, serves as the API layer. It orchestrates data retrieval, applies business logic, and manages user authentication and data storage. Key components include:
+- **Google Places Integration:** Fetches and processes location data.
+- **Foursquare Places Integration:** Enriches place data with additional ratings and popularity metrics.
+- **OpenAI Integration:** Analyzes place reviews to identify family-friendly signals.
+- **KidScore Calculation:** A proprietary algorithm that ranks places based on various kid-friendly criteria (e.g., amenities, safety, user reviews).
+- **AI Pipeline:** An automated ingestion module (`server/pipeline.ts`) that scans Google Places for kid-friendly locations for specific cities, inserts them as `pendente`, and logs execution metrics to the `pipeline_runs` table.
+- **Authentication:** JWT-based system with roles: `admin`, `colaborador`, `parceiro`, and `usuario`.
+- **Backoffice RBAC System:** A robust internal role-based access control system (`backoffice_users` table) with roles: `super_admin`, `admin`, `curador`, and `analista`.
+- **Admin Mobile Screens:** The app includes dedicated administrative screens (`admin-operacao.tsx`, etc.) for managing:
+    - Users and RBAC
+    - App Filters and Categories
+    - AI Prompts and KidScore Rules
+    - Community Feedback and Criteria
+    - AI Operations (City management and Pipeline execution)
 
 ### Database
-PostgreSQL is used as the primary database, accessed via Drizzle ORM. The schema includes tables for users, places, reviews, favorites, and an enrichment cache.
+PostgreSQL is the primary database, accessed via Drizzle ORM. The schema includes:
+- **Users & Auth:** `users`, `backoffice_users`, and sessions.
+- **Places & Cities:** `places_kidspot` (with `status` and `ciudad_id`), and `cities` (storing `nome`, `estado`, `latitude`, `longitude`, `raio_km`, `frequencia`, `ativa`, etc.).
+- **Operations:** `pipeline_runs` for tracking AI ingestion tasks.
+- **Content:** `reviews`, `favorites`, `enrichment_cache`, and `kid_flags`.
 
 ### Core Features
--   **Place Search:** Users can search for places based on location, radius, establishment type, open status, and keywords.
--   **Kid-Friendly Filtering:** An advanced multi-layer filtering system identifies and prioritizes places suitable for children, including blocklists for unsuitable locations and auto-pass types.
--   **Dynamic KidScore:** Places are assigned a KidScore based on type, community flags (e.g., `espaco_kids`, `trocador`), ratings, proximity, and AI-analyzed review sentiment, as well as Foursquare data.
--   **Review System:** Users can submit reviews, contributing to the community-sourced `kid_flags`.
--   **Favorites:** Users can save their favorite places.
--   **Enrichment Cache:** Foursquare and OpenAI results are cached for 7 days to optimize performance and reduce API calls.
+- **Place Search:** Search by location, radius, type, and kid-friendly filters.
+- **Place Status Management:** Places go through a workflow (`pendente` -> `aprovado`/`rejeitado`) before appearing in mobile search results.
+- **Dynamic KidScore:** Multi-layer scoring based on type, community flags (e.g., `espaco_kids`, `trocador`), ratings, and AI-analyzed sentiment.
+- **Enrichment Cache:** Foursquare and OpenAI results are cached for 7 days to optimize performance.
 
 ## External Dependencies
--   **Google Places API:** Used for fetching nearby places, place details, and photos.
--   **Foursquare Places API:** Utilized for enriching place data with additional ratings and popularity information.
--   **OpenAI API:** Integrated for advanced natural language processing to analyze review text and identify family-relevant signals.
--   **PostgreSQL:** The relational database used for all application data storage.
--   **Nodemailer (SMTP):** (Optional) For sending email invitations in the backoffice system.
+- **Google Places API:** Fetching nearby places, details, and photos.
+- **Foursquare Places API:** Enriching data with ratings and popularity.
+- **OpenAI API:** NLP analysis of reviews for family-relevant signals.
+- **PostgreSQL:** Primary relational database.
+- **Nodemailer (SMTP):** (Optional) For sending email invitations.

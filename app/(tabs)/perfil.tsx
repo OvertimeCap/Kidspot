@@ -382,6 +382,16 @@ export default function PerfilScreen() {
             </View>
             <Ionicons name="open-outline" size={18} color={Colors.textSecondary} />
           </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.adminCard, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/admin-operacao" as any)}
+          >
+            <View style={styles.adminCardLeft}>
+              <Ionicons name="pulse-outline" size={22} color="#DC2626" />
+              <Text style={styles.adminCardText}>Operação de IA</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
         </View>
       )}
 

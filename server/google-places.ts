@@ -7,7 +7,7 @@ import {
   type SortBy,
   type PlaceWithScore,
 } from "./kid-score";
-import { getAggregatedKidFlagsForPlaces, upsertPlace } from "./storage";
+import { getAggregatedKidFlagsForPlaces, upsertPlace, getNonApprovedPlaceIds } from "./storage";
 import { matchFoursquarePlace, calculateFoursquareBonus, calculateCrossSourceBonus, type FoursquareMatch } from "./foursquare";
 import { analyzeReviewsWithAI, calculateAIReviewBonus } from "./ai-review-analysis";
 
@@ -454,7 +454,14 @@ export async function searchPlaces(
   // 4. Apply the three-layer kid-relevance filter + blocklist
   raw = applyKidFilters(raw);
 
+  // 4b. Exclude places that exist in local DB with non-approved status
+  const nonApprovedIds = await getNonApprovedPlaceIds(raw.map((p) => p.place_id));
+  if (nonApprovedIds.size > 0) {
+    raw = raw.filter((p) => !nonApprovedIds.has(p.place_id));
+  }
+
   // 5. Persist surviving places to local DB (non-blocking, failures are silent)
+  // New places discovered via app search are auto-approved (backward compat)
   await Promise.allSettled(
     raw.map((p) =>
       upsertPlace({

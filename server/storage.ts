@@ -29,12 +29,27 @@ import {
   type BackofficeUserStatus,
   type AuditLogEntry,
   type AppFilter,
+  type InsertAppFilter,
   type CommunityFeedback,
   type City,
   type InsertCity,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
+
+export async function getNonApprovedPlaceIds(placeIds: string[]): Promise<Set<string>> {
+  if (placeIds.length === 0) return new Set();
+  const rows = await db
+    .select({ place_id: placesKidspot.place_id })
+    .from(placesKidspot)
+    .where(
+      and(
+        inArray(placesKidspot.place_id, placeIds),
+        sql`${placesKidspot.status} != 'aprovado'`,
+      ),
+    );
+  return new Set(rows.map((r) => r.place_id));
+}
 
 export async function upsertPlace(place: InsertPlace): Promise<PlaceKidspot> {
   const [row] = await db
@@ -671,6 +686,45 @@ export async function updateBackofficeUserStatus(
     .update(backofficeUsers)
     .set({ status })
     .where(eq(backofficeUsers.id, id))
+    .returning();
+  return updated ?? null;
+}
+
+export async function listFilters(): Promise<AppFilter[]> {
+  return db.query.appFilters.findMany({
+    orderBy: (t, { desc }) => [desc(t.updated_at)],
+  });
+}
+
+export async function getActiveFilters(): Promise<AppFilter[]> {
+  return db.query.appFilters.findMany({
+    where: eq(appFilters.active, true),
+    orderBy: (t, { asc }) => [asc(t.name)],
+  });
+}
+
+export async function createFilter(data: Omit<InsertAppFilter, "starts_at" | "ends_at"> & { starts_at?: string | Date | null; ends_at?: string | Date | null }): Promise<AppFilter> {
+  const payload: InsertAppFilter = {
+    ...data,
+    starts_at: data.starts_at ? new Date(data.starts_at) : null,
+    ends_at: data.ends_at ? new Date(data.ends_at) : null,
+  };
+  const [filter] = await db.insert(appFilters).values(payload).returning();
+  return filter;
+}
+
+export async function updateFilter(id: string, data: Partial<Omit<InsertAppFilter, "starts_at" | "ends_at"> & { starts_at?: string | Date | null; ends_at?: string | Date | null }>): Promise<AppFilter | null> {
+  const { starts_at, ends_at, ...rest } = data;
+  const payload: Partial<InsertAppFilter> = {
+    ...rest,
+    ...(starts_at !== undefined ? { starts_at: starts_at ? new Date(starts_at) : null } : {}),
+    ...(ends_at !== undefined ? { ends_at: ends_at ? new Date(ends_at) : null } : {}),
+    updated_at: new Date(),
+  };
+  const [updated] = await db
+    .update(appFilters)
+    .set(payload)
+    .where(eq(appFilters.id, id))
     .returning();
   return updated ?? null;
 }

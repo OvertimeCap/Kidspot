@@ -21,6 +21,19 @@ export const backofficeRoleEnum = pgEnum("backoffice_role", [
   "analista",
 ]);
 
+export const placeStatusEnum = pgEnum("place_status", [
+  "pendente",
+  "aprovado",
+  "rejeitado",
+]);
+
+export const scanFrequencyEnum = pgEnum("scan_frequency", [
+  "diaria",
+  "semanal",
+  "quinzenal",
+  "mensal",
+]);
+
 export const backofficeUserStatusEnum = pgEnum("backoffice_user_status", [
   "ativo",
   "pendente",
@@ -67,12 +80,46 @@ export const users = pgTable("users", {
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const cities = pgTable("cities", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  nome: text("nome").notNull(),
+  estado: text("estado").notNull(),
+  latitude: numeric("latitude").notNull(),
+  longitude: numeric("longitude").notNull(),
+  raio_km: integer("raio_km").notNull().default(10),
+  frequencia: scanFrequencyEnum("frequencia").notNull().default("semanal"),
+  parametros_prompt: jsonb("parametros_prompt"),
+  ativa: boolean("ativa").notNull().default(true),
+  ultima_varredura: timestamp("ultima_varredura"),
+  criado_em: timestamp("criado_em").defaultNow().notNull(),
+});
+
+export const pipelineRuns = pgTable("pipeline_runs", {
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  city_id: varchar("city_id").references(() => cities.id),
+  city_name: text("city_name").notNull(),
+  status: text("status").notNull().default("running"),
+  places_found: integer("places_found").notNull().default(0),
+  new_pending: integer("new_pending").notNull().default(0),
+  failures: integer("failures").notNull().default(0),
+  estimated_cost_usd: numeric("estimated_cost_usd").notNull().default("0"),
+  error_message: text("error_message"),
+  started_at: timestamp("started_at").defaultNow().notNull(),
+  finished_at: timestamp("finished_at"),
+});
+
 export const placesKidspot = pgTable("places_kidspot", {
   place_id: text("place_id").primaryKey(),
   city: text("city").notNull(),
+  ciudad_id: varchar("ciudad_id").references(() => cities.id),
   lat: numeric("lat").notNull(),
   lng: numeric("lng").notNull(),
   tags: jsonb("tags"),
+  status: placeStatusEnum("status").notNull().default("aprovado"),
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -232,29 +279,6 @@ export const customCriteria = pgTable("custom_criteria", {
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const scanFrequencyEnum = pgEnum("scan_frequency", [
-  "diaria",
-  "semanal",
-  "quinzenal",
-  "mensal",
-]);
-
-export const cities = pgTable("cities", {
-  id: varchar("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  nome: text("nome").notNull(),
-  estado: text("estado").notNull(),
-  latitude: numeric("latitude").notNull(),
-  longitude: numeric("longitude").notNull(),
-  raio_km: integer("raio_km").notNull().default(10),
-  frequencia: scanFrequencyEnum("frequencia").notNull().default("semanal"),
-  parametros_prompt: jsonb("parametros_prompt"),
-  ativa: boolean("ativa").notNull().default(true),
-  ultima_varredura: timestamp("ultima_varredura"),
-  criado_em: timestamp("criado_em").defaultNow().notNull(),
-});
-
 export const insertPlaceSchema = createInsertSchema(placesKidspot).omit({
   created_at: true,
 });
@@ -392,3 +416,6 @@ export const insertCitySchema = createInsertSchema(cities)
   });
 
 export type InsertCity = z.infer<typeof insertCitySchema>;
+export type PipelineRun = typeof pipelineRuns.$inferSelect;
+export type InsertPipelineRun = typeof pipelineRuns.$inferInsert;
+export type PlaceStatus = "pendente" | "aprovado" | "rejeitado";

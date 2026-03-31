@@ -69,6 +69,38 @@ function RootLayoutNav() {
           presentation: "modal",
         }}
       />
+      <Stack.Screen
+        name="admin-filtros"
+        options={{
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="admin-feedback"
+        options={{
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="admin-usuarios"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="admin-prompts"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="admin-kidscore"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="admin-criterios"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="admin-operacao"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }
