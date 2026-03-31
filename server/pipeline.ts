@@ -3,7 +3,6 @@ import { cities, pipelineRuns, placesKidspot, pipelineBlacklist } from "@shared/
 import { eq, and, inArray } from "drizzle-orm";
 import { searchPlacesByText } from "./google-places";
 import { applyKidFilters } from "./kid-score";
-import type { MinimalPlace } from "./google-places";
 
 export type PipelineRunResult = {
   run_id: string;
