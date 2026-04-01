@@ -1,4 +1,4 @@
-name: Claude Code Workflow.yml
+name: Claude Code Workflow
 
 on:
   push:
