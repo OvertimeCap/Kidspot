@@ -5,11 +5,11 @@
   "scripts": {
     "postinstall": "patch-package",
     "expo:dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_DEV_DOMAIN REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN:5000 npx expo start --localhost",
-    "server:dev": "NODE_ENV=development tsx server/index.ts",
+    "server:dev": "cross-env NODE_ENV=development tsx server/index.ts",
     "expo:start:static:build": "npx expo start --no-dev --minify --localhost",
     "expo:static:build": "node scripts/build.js",
     "server:build": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=server_dist",
-    "server:prod": "NODE_ENV=production node server_dist/index.js",
+    "server:prod": "cross-env NODE_ENV=production node server_dist/index.js",
     "db:push": "drizzle-kit push",
     "start": "npx expo start",
     "lint": "npx expo lint",
@@ -78,6 +78,7 @@
     "drizzle-kit": "^0.31.4",
     "eslint": "^9.31.0",
     "eslint-config-expo": "~10.0.0",
+    "cross-env": "^7.0.3",
     "patch-package": "^8.0.0",
     "typescript": "~5.9.2"
   },
