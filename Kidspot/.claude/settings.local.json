@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(head:*)",
+      "Bash(claude auth:*)",
+      "Bash(claude remote-control:*)"
+    ]
+  }
+}

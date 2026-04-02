@@ -1,0 +1,40 @@
+Aqui está um resumo claro de como o app filtra e ordena os lugares:
+
+Filtragem (4 camadas progressivas)
+1. Blocklist (exclusão automática)
+Lugares com palavras como "advocacia", "hospital", "oficina", "igreja" são eliminados antes de qualquer análise.
+
+2. Tipos permitidos
+Só passam lugares com tipos do Google Places compatíveis (parques, restaurantes, zoológicos, playgrounds, etc.).
+
+3. Evidência de ser kids-friendly
+O lugar precisa ter um tipo inerentemente infantil (ex: amusement_park, zoo) ou conter palavras-chave no nome como "kids", "brinquedoteca", "infantil".
+
+4. Barra de qualidade
+
+Restaurantes/Cafés: rating ≥ 4.2, mínimo 20 avaliações, pelo menos 1 foto
+Parques/Playgrounds: isentos (não têm métricas de negócio no Google)
+Lazer/Atrações: rating ≥ 3.8 e mínimo 5 avaliações
+Pontuação (KidScore de 0 a 100+)
+Critério	Pontos
+Tipo de alto valor (playground, zoológico...)	+40
+Flag da comunidade: espaço kids	+25
+Flag da comunidade: trocador	+20
+Flag da comunidade: cadeirão	+15
+Qualidade (rating ≥ 4.2 + 20+ reviews)	+10
+Proximidade (< 1km)	+10
+Keywords Tier 1 nas reviews (brinquedoteca, fraldário...)	variável (alto)
+Keywords Tier 2 nas reviews (família, crianças...)	variável (baixo)
+Foursquare rating/popularidade	variável
+Análise de reviews por IA (GPT-4o)	variável
+Bônus de confirmação cruzada (Google + Foursquare)	+10
+Ordenação final
+Modo padrão (KidScore):
+
+Lugares com infraestrutura Tier 1 confirmada vêm primeiro
+Entre eles, os com mais reviews aparecem antes
+Os demais são ordenados pelo KidScore total
+Empates: mais reviews → maior rating → menor distância
+Modo "Rating": mais reviews → maior rating → menor distância
+
+Modo "Distância": mais perto → maior rating → mais reviews

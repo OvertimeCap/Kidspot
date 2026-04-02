@@ -1,0 +1,28 @@
+Diretrizes para o Desenvolvimento do Backoffice Web (KidSpot)
+
+O objetivo deste painel é fornecer controle total sobre a operação de curadoria, o motor de IA e a exibição de dados no aplicativo móvel. O sistema deve contemplar os seguintes módulos:
+
+1. Gestão de Prompts (Prompt Management)
+Interface de texto avançada para ajustar as regras, o comportamento e o system prompt da IA. Deve permitir a edição das categorias permitidas/proibidas e a realização de testes em tempo real antes de aplicar as mudanças no pipeline de produção.
+
+2. Controle de Filtros do App
+Painel de controle (chaves liga/desliga) que espelha os filtros visíveis para os usuários no aplicativo móvel. Permite ao administrador ativar, desativar ou criar filtros sazonais (ex: "Especial Férias", "Aberto Segunda-feira") com impacto imediato no frontend do app.
+
+3. Motor de Ranqueamento Dinâmico (KidScore)
+Interface para gerenciar o algoritmo de ordenação dos locais. Exibe todos os critérios atuais e permite alterar o peso matemático de cada um (ex: aumentar a relevância do "fraldário" de peso 1 para 3) ou inativar regras sem a necessidade de alterar o código-fonte.
+
+4. Construtor de Critérios e Campos Customizados
+Ferramenta de flexibilidade do banco de dados para criar e excluir campos dinamicamente. Permite adicionar novos critérios de avaliação (ex: "Aceita Pet", "Menu Baby") para que sejam integrados aos filtros e ao cálculo geral do KidScore.
+
+5. Fila de Curadoria Ágil (Review Queue)
+A tela principal da operação Human-in-the-Loop. Concentra os locais encontrados pela IA em uma lista pendente, destacando visualmente as evidências de adequação infantil (ex: texto grifado mencionando "brinquedoteca"). Oferece botões de ação rápida: "Aprovar", "Aprovar com Edição" ou "Rejeitar".
+
+6. Gestão Visual (Galeria de Fotos)
+Área de curadoria estética. Como o app atende famílias, a confiança visual é essencial. Esta interface permite selecionar a imagem de capa do local, além de aprovar, reorganizar ou excluir fotos irrelevantes e de baixa qualidade trazidas automaticamente pela IA.
+
+7. Controle de Operação e Custos da IA
+Dashboard técnico para gerenciar o pipeline de ingestão. Deve exibir o log de execuções da IA, volume de locais encontrados, taxa de sucesso, falhas e o custo estimado de consumo da API (ex: OpenAI), além de um botão para forçar uma rodada de busca manual imediata.
+
+8. Caixa de Entrada da Comunidade (Feedback)
+Central de atendimento voltada para os dados do mapa. Recebe e organiza interações feitas pelos usuários no app, como sugestões de novos locais, denúncias de lugares inadequados ou alertas de estabelecimentos fechados, transformando o feedback em ações de atualização no banco de dados.
+

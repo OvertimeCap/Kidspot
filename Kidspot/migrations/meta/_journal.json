@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1774662428764,
+      "tag": "0000_bored_vision",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774662718869,
+      "tag": "0001_add_estabelecimento_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1743167280000,
+      "tag": "0002_add_place_claims",
+      "breakpoints": true
+    }
+  ]
+}
