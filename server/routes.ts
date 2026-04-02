@@ -4,7 +4,7 @@ import { z } from "zod";
 import { pool, db } from "./db";
 import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace, geocodeCityPlace } from "./google-places";
 import { sendInviteEmail } from "./email";
-import { runPipelineForCity, runPipelineForAllCities, previewPipelineForCity } from "./pipeline";
+import { runPipelineForCity, runPipelineForAllCities, previewPipelineForCity, aiSearchForCity, applyCriteriaToPlaces } from "./pipeline";
 import { encryptApiKey, decryptApiKey, maskApiKey } from "./ai-crypto";
 import {
   createReview,
@@ -2384,12 +2384,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
               lng: String(place.lng),
               status: "pendente",
             });
+            await upsertPlaceMeta({ place_id: place.place_id, city: parsed.data.city_name });
             inserted++;
           }
         }
         res.json({ inserted });
       } catch (err) {
         console.error("Pipeline triage error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Pipeline 3-step flow: ai-search → apply-criteria → triage          */
+  /* ------------------------------------------------------------------ */
+
+  app.post("/api/admin/pipeline/ai-search", requireAuth,
+    async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      const schema = z.object({
+        city_id: z.string(),
+        limit: z.number().int().min(1).max(200).optional().default(50),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const result = await aiSearchForCity(parsed.data.city_id, parsed.data.limit);
+        res.json({ city_name: result.city_name, places: result.places, total: result.places.length });
+      } catch (err) {
+        console.error("Pipeline ai-search error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  app.post("/api/admin/pipeline/apply-criteria", requireAuth,
+    async (req: AuthRequest, res: Response) => {
+      const caller = await getUserById(req.user!.userId);
+      if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      const placeSchema = z.object({
+        place_id: z.string(),
+        name: z.string(),
+        formatted_address: z.string().optional().default(""),
+        types: z.array(z.string()).optional().default([]),
+        rating: z.number().optional(),
+        user_ratings_total: z.number().optional(),
+        location: z.object({ lat: z.number(), lng: z.number() }),
+      });
+      const schema = z.object({
+        city_id: z.string(),
+        city_name: z.string(),
+        places: z.array(placeSchema),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const result = await applyCriteriaToPlaces(parsed.data.city_id, parsed.data.places);
+        const passed = result.places.filter((p) => p.passed_criteria).length;
+        const rejected = result.places.length - passed;
+        res.json({ places: result.places, passed, rejected });
+      } catch (err) {
+        console.error("Pipeline apply-criteria error:", err);
         res.status(500).json({ error: (err as Error).message });
       }
     }

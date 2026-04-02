@@ -1,8 +1,9 @@
 import { db } from "./db";
 import { cities, pipelineRuns, placesKidspot, pipelineBlacklist } from "@shared/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { searchPlacesByText } from "./google-places";
+import { searchPlacesByText, type MinimalPlace } from "./google-places";
 import { applyKidFilters } from "./kid-score";
+import { upsertPlaceMeta } from "./storage";
 
 export type PipelineRunResult = {
   run_id: string;
@@ -62,6 +63,7 @@ async function ingestCity(cityId: string, cityName: string, lat: number, lng: nu
             lng: String(place.location?.lng ?? 0),
             status: "pendente",
           });
+          await upsertPlaceMeta({ place_id: place.place_id, city: cityName });
           newPending++;
         }
       } catch {
@@ -208,6 +210,94 @@ export async function previewPipelineForCity(
       location: p.location,
       already_exists: existingSet.has(p.place_id),
     })),
+  };
+}
+
+export type CriteriaPlace = PreviewPlace & {
+  passed_criteria: boolean;
+  rejection_reason?: string;
+};
+
+/**
+ * Step 1 of the 3-step pipeline: call Google Places and return raw results
+ * without applying kid filters. Lets admins see everything before filtering.
+ */
+export async function aiSearchForCity(
+  cityId: string,
+  limit = 50,
+): Promise<{ city_name: string; places: MinimalPlace[] }> {
+  const city = await db.query.cities.findFirst({
+    where: and(eq(cities.id, cityId), eq(cities.ativa, true)),
+  });
+  if (!city) throw new Error("Cidade não encontrada ou não está ativa");
+
+  const rawPlaces = await searchPlacesByText(city.nome);
+  const limited = rawPlaces.slice(0, limit);
+
+  await db.update(cities).set({ ultima_varredura: new Date() }).where(eq(cities.id, cityId));
+
+  return {
+    city_name: city.nome,
+    places: limited.map((p) => ({
+      place_id: p.place_id,
+      name: p.name ?? "",
+      formatted_address: p.formatted_address,
+      types: p.types ?? [],
+      rating: p.rating,
+      user_ratings_total: p.user_ratings_total,
+      location: p.location,
+    })),
+  };
+}
+
+/**
+ * Step 2 of the 3-step pipeline: apply kid-friendly criteria and blacklist
+ * to the raw places returned by aiSearchForCity.
+ */
+export async function applyCriteriaToPlaces(
+  cityId: string,
+  rawPlaces: MinimalPlace[],
+): Promise<{ places: CriteriaPlace[] }> {
+  const blacklisted = await db
+    .select({ place_id: pipelineBlacklist.place_id })
+    .from(pipelineBlacklist);
+  const blacklistSet = new Set(blacklisted.map((b) => b.place_id));
+
+  const withTypes = rawPlaces.map((p) => ({ ...p, types: p.types ?? [], name: p.name ?? "" }));
+  const filtered = applyKidFilters(withTypes);
+  const filteredSet = new Set(filtered.map((p) => p.place_id));
+
+  const placeIds = rawPlaces.map((p) => p.place_id);
+  const existingRows = placeIds.length > 0
+    ? await db
+        .select({ place_id: placesKidspot.place_id })
+        .from(placesKidspot)
+        .where(inArray(placesKidspot.place_id, placeIds))
+    : [];
+  const existingSet = new Set(existingRows.map((r) => r.place_id));
+
+  return {
+    places: rawPlaces.map((p) => {
+      const isBlacklisted = blacklistSet.has(p.place_id);
+      const passedFilters = filteredSet.has(p.place_id);
+      const passed = passedFilters && !isBlacklisted;
+      let rejection_reason: string | undefined;
+      if (isBlacklisted) rejection_reason = "Na blacklist";
+      else if (!passedFilters) rejection_reason = "Não atende critérios kid-friendly";
+
+      return {
+        place_id: p.place_id,
+        name: p.name,
+        formatted_address: p.formatted_address,
+        types: p.types,
+        rating: p.rating,
+        user_ratings_total: p.user_ratings_total,
+        location: p.location,
+        already_exists: existingSet.has(p.place_id),
+        passed_criteria: passed,
+        rejection_reason,
+      };
+    }),
   };
 }
 
