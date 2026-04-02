@@ -6,7 +6,7 @@ const IV_LEN = 12;
 const TAG_LEN = 16;
 
 function getDerivedKey(): Buffer {
-  const seed = process.env.AI_CRYPTO_SECRET || process.env.DATABASE_URL || "kidspot-dev-fallback-secret-key";
+  const seed = process.env.AI_CRYPTO_SECRET || process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || "kidspot-dev-fallback-secret-key";
   return crypto.scryptSync(seed, "kidspot-ai-salt-v1", KEY_LEN);
 }
 

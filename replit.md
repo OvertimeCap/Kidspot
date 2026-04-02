@@ -36,7 +36,7 @@ The Express.js backend, written in TypeScript, serves as the API layer. It orche
 - **Admin Panel:** A separate web-based admin panel (`/admin`) accessible via Express, offering modules for user management, feedback processing, AI prompt configuration, KidScore rule adjustments, custom criteria definition, app filter management, and city configuration. This panel is a pure HTML/JS single-page application.
 
 ### Database
-PostgreSQL is the primary database, accessed via Drizzle ORM. The schema includes:
+PostgreSQL hosted on **Neon** (external) is the primary database, accessed via Drizzle ORM. The connection is configured via the `NEON_DATABASE_URL` environment variable (falls back to `DATABASE_URL` if not set). The schema includes:
 - **Users & Auth:** `users`, `backoffice_users`, and sessions.
 - **Places & Cities:** `places_kidspot` (with `status` and `ciudad_id`), and `cities` (storing `nome`, `estado`, `latitude`, `longitude`, `raio_km`, `frequencia`, `ativa`, etc.).
 - **Operations:** `pipeline_runs` for tracking AI ingestion tasks.
@@ -52,5 +52,5 @@ PostgreSQL is the primary database, accessed via Drizzle ORM. The schema include
 - **Google Places API:** Fetching nearby places, details, and photos.
 - **Foursquare Places API:** Enriching data with ratings and popularity.
 - **OpenAI API:** NLP analysis of reviews for family-relevant signals.
-- **PostgreSQL:** Primary relational database.
+- **Neon PostgreSQL:** Primary relational database (external, hosted on Neon).
 - **Nodemailer (SMTP):** (Optional) For sending email invitations.

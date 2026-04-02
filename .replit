@@ -91,6 +91,7 @@ args = "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_DEV_DOMAIN REACT_NATIVE_PACKAGER
 
 [userenv.shared]
 EXPO_PUBLIC_GOOGLE_CLIENT_ID = "1088606725732-ki7spf932r16hbsqm3bsumb9pi3isktg.apps.googleusercontent.com"
+NEON_DATABASE_URL = "postgresql://neondb_owner:npg_oG8VsfTb5mNw@ep-twilight-grass-a8czkdab-pooler.eastus2.azure.neon.tech/Kidspot?sslmode=require&channel_binding=require"
 
 [[workflows.workflow]]
 name = "Start Claude"
