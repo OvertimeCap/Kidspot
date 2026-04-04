@@ -288,6 +288,8 @@ export const curationStatusEnum = pgEnum("curation_status", [
   "rejeitado",
 ]);
 
+export const placeTypeEnum = pgEnum("place_type", ["comer", "parques"]);
+
 export const placePhotos = pgTable("place_photos", {
   id: varchar("id")
     .primaryKey()
@@ -302,6 +304,19 @@ export const placePhotos = pgTable("place_photos", {
   deleted: boolean("deleted").notNull().default(false),
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const cityDemand = pgTable("city_demand", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cidade_label: text("cidade_label").notNull().unique(),
+  estado: text("estado"),
+  latitude: numeric("latitude").notNull(),
+  longitude: numeric("longitude").notNull(),
+  count: integer("count").notNull().default(1),
+  last_searched_at: timestamp("last_searched_at").defaultNow().notNull(),
+  criado_em: timestamp("criado_em").defaultNow().notNull(),
+});
+export type CityDemand = typeof cityDemand.$inferSelect;
+export type InsertCityDemand = typeof cityDemand.$inferInsert;
 
 export const placeKidspotMeta = pgTable("place_kidspot_meta", {
   place_id: text("place_id")
@@ -318,6 +333,7 @@ export const placeKidspotMeta = pgTable("place_kidspot_meta", {
   curated_by: varchar("curated_by"),
   curated_at: timestamp("curated_at"),
   display_order: integer("display_order").default(0),
+  place_type: placeTypeEnum("place_type").default("comer"),
   ingested_at: timestamp("ingested_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -454,6 +470,7 @@ export type InsertPlacePhoto = typeof placePhotos.$inferInsert;
 export type PlaceKidspotMeta = typeof placeKidspotMeta.$inferSelect;
 export type InsertPlaceKidspotMeta = typeof placeKidspotMeta.$inferInsert;
 export type CurationStatus = "pendente" | "aprovado" | "rejeitado";
+export type PlaceType = "comer" | "parques";
 
 export const insertCitySchema = createInsertSchema(cities)
   .omit({ id: true, criado_em: true, ultima_varredura: true })

@@ -27,19 +27,5 @@
       "Bash(kill 1717)",
       "Bash(curl:*)"
     ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cd \"D:/Novo Kidspot/Kidspot\" && git pull origin main",
-            "statusMessage": "Sincronizando com main...",
-            "async": false
-          }
-        ]
-      }
-    ]
   }
 }

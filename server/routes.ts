@@ -57,6 +57,7 @@ import {
   rejectFeedback,
   addFeedbackToQueue,
   listCities,
+  listActiveCities,
   getCityById,
   createCity,
   updateCity,
@@ -87,6 +88,9 @@ import {
   getSponsorshipPerformance,
   checkCityByCoords,
   getPublishedPlacesByCity,
+  recordCityDemand,
+  listCityDemand,
+  deleteCityDemand,
   getPublishedPlacesByCityAdmin,
   updatePlaceDisplayOrder,
   removeFromPublished,
@@ -96,7 +100,7 @@ import {
 } from "./storage";
 import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting, pipelineBlacklist } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
-import { textSearchClaimable } from "./google-places";
+import { textSearchClaimable, reverseGeocodeCity } from "./google-places";
 import { invalidatePromptCache } from "./ai-review-analysis";
 import { eq, desc, and, ilike, sql as sqlExpr } from "drizzle-orm";
 import crypto from "crypto";
@@ -2033,6 +2037,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /* ------------------------------------------------------------------ */
+  /* City Demand — backoffice                                            */
+  /* ------------------------------------------------------------------ */
+
+  app.get(
+    "/api/admin/demanda-cidades",
+    requireAdmin,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const estado = (req.query.estado as string) || undefined;
+        const items = await listCityDemand(estado);
+        res.json({ demands: items, total: items.length });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/demanda-cidades/:id",
+    requireAdmin,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        await deleteCityDemand(req.params.id as string);
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------------------------ */
   /* Community Feedback — public                                         */
   /* ------------------------------------------------------------------ */
 
@@ -2955,6 +2990,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const limit = Math.min(parseInt((req.query.limit as string) || "20", 10), 100);
       const offset = parseInt((req.query.offset as string) || "0", 10);
 
+      const placeType = req.query.place_type as string | undefined;
       const validStatuses = ["pendente", "aprovado", "rejeitado"];
       if (!validStatuses.includes(status)) {
         res.status(400).json({ error: "status inválido" });
@@ -2968,6 +3004,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           category,
           minKidScore,
           maxKidScore,
+          placeType: (placeType === "comer" || placeType === "parques") ? placeType : undefined,
           limit,
           offset,
         });
@@ -2998,6 +3035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     name: z.string().optional(),
     description: z.string().optional(),
     custom_criteria: z.record(z.unknown()).optional(),
+    place_type: z.enum(["comer", "parques"]).optional(),
   });
 
   app.post(
@@ -3354,12 +3392,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/cities/check", async (req: AuthRequest, res: Response) => {
     const lat = parseFloat(req.query.lat as string);
     const lng = parseFloat(req.query.lng as string);
+    const label = ((req.query.label as string) || "").trim() || null;
     if (isNaN(lat) || isNaN(lng)) {
       res.status(400).json({ error: "lat e lng são obrigatórios" });
       return;
     }
     try {
       const result = await checkCityByCoords(lat, lng);
+      if (!result || !result.enabled) {
+        // Fire-and-forget: never blocks the response
+        (async () => {
+          try {
+            if (label) {
+              await recordCityDemand(label, lat, lng);
+            } else {
+              const geo = await reverseGeocodeCity(lat, lng);
+              if (geo) await recordCityDemand(geo.label, lat, lng, geo.estado);
+            }
+          } catch (e) {
+            console.error("recordCityDemand error:", e);
+          }
+        })();
+      }
       if (!result) {
         res.json({ enabled: false, city_id: null, city_name: null });
         return;
@@ -3376,10 +3430,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/cities/list", async (req: AuthRequest, res: Response) => {
+    const search = req.query.search as string | undefined;
+    try {
+      const cities = await listActiveCities(search);
+      res.json({ cities });
+    } catch (err) {
+      console.error("List active cities error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.get("/api/cities/:cityId/places", async (req: AuthRequest, res: Response) => {
     const cityId = req.params.cityId as string;
+    const placeType = req.query.place_type as string | undefined;
     try {
-      const places = await getPublishedPlacesByCity(cityId);
+      const places = await getPublishedPlacesByCity(
+        cityId,
+        (placeType === "comer" || placeType === "parques") ? placeType : undefined,
+      );
       res.json({ places });
     } catch (err) {
       console.error("Curated places error:", err);

@@ -18,6 +18,7 @@ if (!GOOGLE_PLACES_API_KEY) {
 }
 
 const PLACES_BASE = "https://maps.googleapis.com/maps/api/place";
+const GEOCODING_BASE = "https://maps.googleapis.com/maps/api/geocode";
 const FETCH_TIMEOUT_MS = 8_000;
 
 async function fetchWithTimeout(
@@ -877,4 +878,27 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
     website: r.website as string | undefined,
     formatted_phone_number: r.formatted_phone_number as string | undefined,
   };
+}
+
+export async function reverseGeocodeCity(lat: number, lng: number): Promise<{ label: string; estado: string | null } | null> {
+  const qs = new URLSearchParams({
+    latlng: `${lat},${lng}`,
+    result_type: "locality",
+    language: "pt-BR",
+    key: GOOGLE_PLACES_API_KEY!,
+  });
+  try {
+    const res = await fetchWithTimeout(`${GEOCODING_BASE}/json?${qs.toString()}`, "reverseGeocodeCity");
+    const data = await res.json();
+    const result = data.results?.[0];
+    if (!result) return null;
+    const label = result.formatted_address as string;
+    const stateComponent = result.address_components?.find((c: any) =>
+      c.types.includes("administrative_area_level_1")
+    );
+    const estado = stateComponent?.long_name ?? null;
+    return { label, estado };
+  } catch {
+    return null;
+  }
 }

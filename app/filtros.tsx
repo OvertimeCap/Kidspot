@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { apiRequest } from "@/lib/query-client";
 import { usePickedLocation } from "@/lib/picked-location-context";
 import Colors from "@/constants/colors";
+import { getActiveCities, type ActiveCity } from "@/lib/api";
 
 type Suggestion = { place_id: string; description: string };
 
@@ -42,11 +43,13 @@ async function geocodeSuggestion(
 
 export default function FiltrosSheet() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ lat?: string; lng?: string }>();
+  const params = useLocalSearchParams<{ lat?: string; lng?: string; mode?: string }>();
   const originLat = params.lat ? parseFloat(params.lat) : undefined;
   const originLng = params.lng ? parseFloat(params.lng) : undefined;
+  const isCitiesMode = params.mode === "cities";
   const { setPickedLocation } = usePickedLocation();
 
+  // Google autocomplete mode state
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -54,9 +57,38 @@ export default function FiltrosSheet() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
 
+  // Cities mode state
+  const [allCities, setAllCities] = useState<ActiveCity[]>([]);
+  const [citiesQuery, setCitiesQuery] = useState("");
+  const [citiesLoading, setCitiesLoading] = useState(false);
+
   useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 150);
-  }, []);
+    if (!isCitiesMode) {
+      setTimeout(() => inputRef.current?.focus(), 150);
+    }
+  }, [isCitiesMode]);
+
+  useEffect(() => {
+    if (isCitiesMode) {
+      setCitiesLoading(true);
+      getActiveCities()
+        .then(setAllCities)
+        .catch(() => setAllCities([]))
+        .finally(() => setCitiesLoading(false));
+    }
+  }, [isCitiesMode]);
+
+  const filteredCities = citiesQuery.trim().length > 0
+    ? allCities.filter(c =>
+        c.nome.toLowerCase().includes(citiesQuery.toLowerCase()) ||
+        c.estado.toLowerCase().includes(citiesQuery.toLowerCase()),
+      )
+    : allCities;
+
+  const handleCitySelect = useCallback((city: ActiveCity) => {
+    setPickedLocation(parseFloat(city.latitude), parseFloat(city.longitude), `${city.nome} — ${city.estado}`);
+    router.back();
+  }, [setPickedLocation]);
 
   const handleChangeText = useCallback(
     (text: string) => {
@@ -92,9 +124,72 @@ export default function FiltrosSheet() {
     } finally {
       setSelecting(false);
     }
-  }, []);
+  }, [setPickedLocation]);
 
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom + 16;
+
+  if (isCitiesMode) {
+    return (
+      <View style={[styles.container, { paddingBottom: bottomPad }]}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Escolher Cidade</Text>
+          <Pressable onPress={() => router.back()} hitSlop={12}>
+            <Ionicons name="close" size={22} color={Colors.textSecondary} />
+          </Pressable>
+        </View>
+
+        <View style={styles.inputRow}>
+          <Ionicons name="search" size={18} color={Colors.textLight} style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Buscar cidade..."
+            placeholderTextColor={Colors.textLight}
+            value={citiesQuery}
+            onChangeText={setCitiesQuery}
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {citiesQuery.length > 0 && (
+            <Pressable onPress={() => setCitiesQuery("")} hitSlop={8}>
+              <Ionicons name="close-circle" size={18} color={Colors.textLight} />
+            </Pressable>
+          )}
+        </View>
+
+        {citiesLoading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color={Colors.primary} />
+            <Text style={styles.selectingText}>Carregando cidades...</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filteredCities}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            style={styles.list}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            ListEmptyComponent={
+              <View style={styles.centered}>
+                <Ionicons name="search-outline" size={32} color={Colors.textLight} />
+                <Text style={styles.emptyText}>Nenhuma cidade encontrada</Text>
+              </View>
+            }
+            renderItem={({ item }) => (
+              <Pressable
+                style={({ pressed }) => [styles.suggestionItem, pressed && styles.suggestionPressed]}
+                onPress={() => handleCitySelect(item)}
+              >
+                <Ionicons name="location-outline" size={18} color={Colors.primary} />
+                <Text style={styles.suggestionText} numberOfLines={1}>
+                  {item.nome} — {item.estado}
+                </Text>
+              </Pressable>
+            )}
+          />
+        )}
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingBottom: bottomPad }]}>
