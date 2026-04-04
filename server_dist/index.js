@@ -4647,14 +4647,9 @@ ${combinedReviews}`
     res.json({ role, permissions });
   });
   app2.get(
-    "/api/backoffice/demanda-cidades",
-    requireAuth,
+    "/api/admin/demanda-cidades",
+    requireAdmin,
     async (req, res) => {
-      const caller = await getUserById(req.user.userId);
-      if (!caller || caller.role !== "admin") {
-        res.status(403).json({ error: "Acesso negado" });
-        return;
-      }
       try {
         const estado = req.query.estado || void 0;
         const items = await listCityDemand(estado);
@@ -4665,14 +4660,9 @@ ${combinedReviews}`
     }
   );
   app2.delete(
-    "/api/backoffice/demanda-cidades/:id",
-    requireAuth,
+    "/api/admin/demanda-cidades/:id",
+    requireAdmin,
     async (req, res) => {
-      const caller = await getUserById(req.user.userId);
-      if (!caller || caller.role !== "admin") {
-        res.status(403).json({ error: "Acesso negado" });
-        return;
-      }
       try {
         await deleteCityDemand(req.params.id);
         res.json({ ok: true });

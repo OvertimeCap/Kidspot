@@ -2041,14 +2041,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ------------------------------------------------------------------ */
 
   app.get(
-    "/api/backoffice/demanda-cidades",
-    requireAuth,
+    "/api/admin/demanda-cidades",
+    requireAdmin,
     async (req: AuthRequest, res: Response) => {
-      const caller = await getUserById(req.user!.userId);
-      if (!caller || caller.role !== "admin") {
-        res.status(403).json({ error: "Acesso negado" });
-        return;
-      }
       try {
         const estado = (req.query.estado as string) || undefined;
         const items = await listCityDemand(estado);
@@ -2060,16 +2055,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   app.delete(
-    "/api/backoffice/demanda-cidades/:id",
-    requireAuth,
+    "/api/admin/demanda-cidades/:id",
+    requireAdmin,
     async (req: AuthRequest, res: Response) => {
-      const caller = await getUserById(req.user!.userId);
-      if (!caller || caller.role !== "admin") {
-        res.status(403).json({ error: "Acesso negado" });
-        return;
-      }
       try {
-        await deleteCityDemand(req.params.id);
+        await deleteCityDemand(req.params.id as string);
         res.json({ ok: true });
       } catch (err) {
         res.status(500).json({ error: (err as Error).message });

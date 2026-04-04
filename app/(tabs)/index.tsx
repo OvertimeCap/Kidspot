@@ -113,14 +113,19 @@ function PlaceCard({
   );
 }
 
-function CityUnavailableScreen({ cityName }: { cityName: string | null }) {
+function CityUnavailableScreen({ onOpenCityPicker }: { onOpenCityPicker: () => void }) {
   return (
     <View style={styles.centered}>
       <Ionicons name="location-outline" size={52} color={Colors.textLight} />
       <Text style={styles.cityUnavailableTitle}>Cidade indisponível</Text>
-      <Text style={styles.cityUnavailableText}>
-        {cityName ? `${cityName} ainda` : "Esta cidade ainda"} não está disponível no KidSpot.{"\n"}Em breve nesta região.
-      </Text>
+      <Text style={styles.cityUnavailableText}>Em breve nesta região.</Text>
+      <Pressable
+        style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+        onPress={onOpenCityPicker}
+      >
+        <Ionicons name="map-outline" size={16} color="#fff" />
+        <Text style={styles.primaryBtnText}>Ver cidades disponíveis</Text>
+      </Pressable>
     </View>
   );
 }
@@ -300,9 +305,7 @@ export default function HomeScreen() {
       )}
 
       {cityUnavailable && (
-        <CityUnavailableScreen
-          cityName={cityCheck?.city_name ?? null}
-        />
+        <CityUnavailableScreen onOpenCityPicker={openCityPicker} />
       )}
 
       {searched && !loading && !error && !cityUnavailable && (
