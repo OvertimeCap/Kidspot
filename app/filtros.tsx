@@ -12,7 +12,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { getApiUrl } from "@/lib/query-client";
+import { apiRequest } from "@/lib/query-client";
 import { usePickedLocation } from "@/lib/picked-location-context";
 import Colors from "@/constants/colors";
 
@@ -24,26 +24,19 @@ async function fetchSuggestions(
   lng?: number,
 ): Promise<Suggestion[]> {
   if (input.trim().length < 2) return [];
-  const base = getApiUrl();
-  const url = new URL("/api/places/autocomplete", base);
-  url.searchParams.set("input", input.trim());
-  if (lat != null) url.searchParams.set("lat", String(lat));
-  if (lng != null) url.searchParams.set("lng", String(lng));
-
-  const res = await fetch(url.toString());
-  if (!res.ok) return [];
+  let route = `/api/places/autocomplete?input=${encodeURIComponent(input.trim())}`;
+  if (lat != null) route += `&lat=${lat}`;
+  if (lng != null) route += `&lng=${lng}`;
+  const res = await apiRequest("GET", route);
   const data = await res.json();
+  console.log("[autocomplete] response:", JSON.stringify(data));
   return data.suggestions ?? [];
 }
 
 async function geocodeSuggestion(
   placeId: string,
 ): Promise<{ lat: number; lng: number; label: string }> {
-  const base = getApiUrl();
-  const url = new URL("/api/places/geocode", base);
-  url.searchParams.set("place_id", placeId);
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error("Geocode failed");
+  const res = await apiRequest("GET", `/api/places/geocode?place_id=${encodeURIComponent(placeId)}`);
   return res.json();
 }
 
@@ -78,6 +71,9 @@ export default function FiltrosSheet() {
         try {
           const results = await fetchSuggestions(text, originLat, originLng);
           setSuggestions(results);
+        } catch (err) {
+          console.error("[autocomplete] fetch error:", err);
+          setSuggestions([]);
         } finally {
           setLoading(false);
         }

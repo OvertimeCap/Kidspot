@@ -1,0 +1,24 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "KidSpot: Iniciar Servidor e Abrir Backoffice",
+            "type": "shell",
+            "command": "(cd \"D:/Novo Kidspot/Kidspot\" && PORT=3000 npx dotenv-cli -e .env -- npx cross-env NODE_ENV=development tsx server/index.ts &) && sleep 8 && start http://localhost:3000/admin",
+            "options": {
+                "shell": {
+                    "executable": "bash",
+                    "args": ["-c"]
+                }
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "label": "KidSpot Server"
+            }
+        }
+    ]
+}

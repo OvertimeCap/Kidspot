@@ -15,49 +15,37 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 import {
-  searchPlaces,
-  getBestType,
+  checkCity,
+  getCuratedPlaces,
+  requestCityActivation,
   haversineKm,
   formatDistance,
-  getPhotoUrl,
-  type PlaceWithScore,
+  type CuratedPlace,
+  type CityCheckResult,
 } from "@/lib/api";
 import { usePickedLocation } from "@/lib/picked-location-context";
 import StoriesRow, { type PlacePhotoMap } from "@/components/StoriesRow";
 
 type UserLocation = { lat: number; lng: number };
-type TypeFilter = "Todos" | "Restaurantes" | "Parques";
-
-const FOOD_TYPES = new Set(["restaurant", "cafe", "bakery", "meal_takeaway", "food"]);
-const PARK_TYPES = new Set([
-  "park", "playground", "amusement_center", "amusement_park", "zoo", "tourist_attraction",
-]);
 
 function PlaceCard({
   place,
   userLocation,
 }: {
-  place: PlaceWithScore;
+  place: CuratedPlace;
   userLocation: UserLocation | null;
 }) {
-  const photoUrl =
-    place.photos && place.photos.length > 0
-      ? getPhotoUrl(place.photos[0].photo_reference, 600)
-      : null;
-
   const distanceText =
-    userLocation
+    userLocation && place.lat && place.lng
       ? formatDistance(
           haversineKm(
             userLocation.lat,
             userLocation.lng,
-            place.location.lat,
-            place.location.lng,
+            parseFloat(place.lat),
+            parseFloat(place.lng),
           ),
         )
       : null;
-
-  const category = getBestType(place.types);
 
   return (
     <Pressable
@@ -65,9 +53,9 @@ function PlaceCard({
       onPress={() => router.push(`/place/${place.place_id}`)}
     >
       <View style={styles.cardPhoto}>
-        {photoUrl ? (
+        {place.cover_photo_url ? (
           <Image
-            source={{ uri: photoUrl }}
+            source={{ uri: place.cover_photo_url }}
             style={styles.photo}
             contentFit="cover"
           />
@@ -76,9 +64,11 @@ function PlaceCard({
             <Ionicons name="image-outline" size={36} color="#ccc" />
           </View>
         )}
-        <View style={styles.categoryBadge}>
-          <Text style={styles.categoryText}>{category}</Text>
-        </View>
+        {place.category && (
+          <View style={styles.categoryBadge}>
+            <Text style={styles.categoryText}>{place.category}</Text>
+          </View>
+        )}
         {place.is_sponsored && (
           <View style={styles.sponsoredBadge}>
             <Ionicons name="star" size={10} color="#FF6B35" />
@@ -89,7 +79,7 @@ function PlaceCard({
 
       <View style={styles.cardBody}>
         <Text style={styles.placeName} numberOfLines={1}>
-          {place.name}
+          {place.name ?? "Local"}
         </Text>
 
         {place.family_highlight && (
@@ -100,15 +90,10 @@ function PlaceCard({
         )}
 
         <View style={styles.metaRow}>
-          {place.rating != null && (
+          {place.kid_score != null && (
             <View style={styles.ratingRow}>
               <Ionicons name="star" size={13} color={Colors.star} />
-              <Text style={styles.ratingText}>
-                {place.rating.toFixed(1)}
-                {place.user_ratings_total
-                  ? `  (${place.user_ratings_total})`
-                  : ""}
-              </Text>
+              <Text style={styles.ratingText}>KidScore {place.kid_score}</Text>
             </View>
           )}
           {distanceText && (
@@ -119,11 +104,53 @@ function PlaceCard({
           )}
         </View>
 
-        <Text style={styles.address} numberOfLines={1}>
-          {place.address}
-        </Text>
+        {place.address && (
+          <Text style={styles.address} numberOfLines={1}>
+            {place.address}
+          </Text>
+        )}
       </View>
     </Pressable>
+  );
+}
+
+function CityUnavailableScreen({
+  cityName,
+  onRequest,
+  requesting,
+  requested,
+}: {
+  cityName: string | null;
+  onRequest: () => void;
+  requesting: boolean;
+  requested: boolean;
+}) {
+  return (
+    <View style={styles.centered}>
+      <Ionicons name="location-outline" size={52} color={Colors.textLight} />
+      <Text style={styles.cityUnavailableTitle}>Cidade indisponível</Text>
+      <Text style={styles.cityUnavailableText}>
+        {cityName ? `${cityName} ainda` : "Esta cidade ainda"} não está disponível no KidSpot.{"\n"}Em breve por aqui!
+      </Text>
+      {requested ? (
+        <View style={styles.requestedBadge}>
+          <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
+          <Text style={styles.requestedText}>Solicitação enviada!</Text>
+        </View>
+      ) : (
+        <Pressable
+          style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed, requesting && styles.btnDisabled]}
+          onPress={onRequest}
+          disabled={requesting}
+        >
+          {requesting
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Ionicons name="send-outline" size={16} color="#fff" />
+          }
+          <Text style={styles.primaryBtnText}>Solicitar habilitação</Text>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -131,58 +158,41 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { pickedLocation } = usePickedLocation();
 
-  const [results, setResults] = useState<PlaceWithScore[]>([]);
+  const [results, setResults] = useState<CuratedPlace[]>([]);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [searched, setSearched] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>("Todos");
-  const [placePhotoRefs, setPlacePhotoRefs] = useState<PlacePhotoMap>({});
+  const [cityCheck, setCityCheck] = useState<CityCheckResult | null>(null);
+  const [placePhotoRefs] = useState<PlacePhotoMap>({});
+  const [requesting, setRequesting] = useState(false);
+  const [requested, setRequested] = useState(false);
 
   const didAutoSearch = useRef(false);
-
-  const filteredResults = results.filter((place) => {
-    if (typeFilter === "Restaurantes")
-      return place.types.some((t) => FOOD_TYPES.has(t));
-    if (typeFilter === "Parques")
-      return place.types.some((t) => PARK_TYPES.has(t));
-    return true;
-  });
 
   const doSearch = useCallback(
     async (lat: number, lng: number, label?: string) => {
       setLoading(true);
       setError(null);
-      setTypeFilter("Todos");
+      setCityCheck(null);
+      setRequested(false);
       try {
-        const places = await searchPlaces({
-          latitude: lat,
-          longitude: lng,
-          radius: 8000,
-          establishmentTypes: [
-            "park",
-            "playground",
-            "amusement_center",
-            "zoo",
-            "tourist_attraction",
-            "restaurant",
-            "cafe",
-          ],
-          sortBy: "kidScore",
-        });
-        setResults(places);
-        const photoMap: PlacePhotoMap = {};
-        for (const p of places) {
-          if (p.photos && p.photos.length > 0) {
-            photoMap[p.place_id] = p.photos[0].photo_reference;
-          }
-        }
-        setPlacePhotoRefs(photoMap);
-        setSearched(true);
+        const check = await checkCity(lat, lng);
+        setCityCheck(check);
         setUserLocation({ lat, lng });
         if (label) setActiveLabel(label);
+
+        if (!check.enabled || !check.city_id) {
+          setResults([]);
+          setSearched(true);
+          return;
+        }
+
+        const places = await getCuratedPlaces(check.city_id);
+        setResults(places);
+        setSearched(true);
       } catch {
         setError("Não foi possível buscar lugares. Tente novamente.");
       } finally {
@@ -237,7 +247,21 @@ export default function HomeScreen() {
     });
   }, [userLocation]);
 
+  const handleRequestActivation = useCallback(async () => {
+    if (!userLocation) return;
+    setRequesting(true);
+    try {
+      await requestCityActivation(userLocation.lat, userLocation.lng, cityCheck?.city_name ?? null);
+      setRequested(true);
+    } catch {
+      // fail silently — the button stays enabled for retry
+    } finally {
+      setRequesting(false);
+    }
+  }, [userLocation, cityCheck]);
+
   const topPad = Platform.OS === "web" ? 67 : insets.top;
+  const cityUnavailable = searched && !loading && !error && cityCheck && !cityCheck.enabled;
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
@@ -303,9 +327,18 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {searched && !loading && !error && (
+      {cityUnavailable && (
+        <CityUnavailableScreen
+          cityName={cityCheck?.city_name ?? null}
+          onRequest={handleRequestActivation}
+          requesting={requesting}
+          requested={requested}
+        />
+      )}
+
+      {searched && !loading && !error && !cityUnavailable && (
         <FlatList
-          data={filteredResults}
+          data={results}
           keyExtractor={(item) => item.place_id}
           contentContainerStyle={[
             styles.listContent,
@@ -315,8 +348,8 @@ export default function HomeScreen() {
             <View>
               <View style={styles.resultsHeader}>
                 <Text style={styles.resultsCount}>
-                  {filteredResults.length > 0
-                    ? `${filteredResults.length} lugares encontrados`
+                  {results.length > 0
+                    ? `${results.length} lugares encontrados`
                     : "Nenhum lugar encontrado"}
                 </Text>
 
@@ -330,27 +363,6 @@ export default function HomeScreen() {
                 )}
 
                 <View style={styles.filterRow}>
-                  {(["Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
-                    <Pressable
-                      key={f}
-                      style={({ pressed }) => [
-                        styles.typeFilterBtn,
-                        typeFilter === f && styles.typeFilterBtnActive,
-                        pressed && styles.btnPressed,
-                      ]}
-                      onPress={() => setTypeFilter(typeFilter === f ? "Todos" : f)}
-                    >
-                      <Text
-                        style={[
-                          styles.typeFilterBtnText,
-                          typeFilter === f && styles.typeFilterBtnTextActive,
-                        ]}
-                      >
-                        {f}
-                      </Text>
-                    </Pressable>
-                  ))}
-
                   <Pressable
                     style={({ pressed }) => [styles.filtrosBtn, pressed && styles.btnPressed]}
                     onPress={openFiltros}
@@ -450,6 +462,35 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontFamily: "Inter_400Regular",
   },
+  cityUnavailableTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: Colors.text,
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
+  },
+  cityUnavailableText: {
+    color: Colors.textSecondary,
+    fontSize: 15,
+    textAlign: "center",
+    lineHeight: 22,
+    fontFamily: "Inter_400Regular",
+  },
+  requestedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#EEF4FF",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  requestedText: {
+    color: Colors.primary,
+    fontSize: 14,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+  },
   primaryBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -472,6 +513,9 @@ const styles = StyleSheet.create({
   btnPressed: {
     opacity: 0.82,
     transform: [{ scale: 0.98 }],
+  },
+  btnDisabled: {
+    opacity: 0.6,
   },
   primaryBtnText: {
     color: "#fff",
@@ -514,25 +558,6 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: "center",
     flexWrap: "wrap",
-  },
-  typeFilterBtn: {
-    borderWidth: 1.5,
-    borderColor: Colors.primary,
-    borderRadius: 20,
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-  },
-  typeFilterBtnActive: {
-    backgroundColor: Colors.primary,
-  },
-  typeFilterBtnText: {
-    color: Colors.primary,
-    fontWeight: "600",
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-  },
-  typeFilterBtnTextActive: {
-    color: "#fff",
   },
   filtrosBtn: {
     flexDirection: "row",

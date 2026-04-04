@@ -1224,6 +1224,7 @@
             <select class="select-input" id="u-role-filter">
               ${roles.map(r => `<option value="${r}" ${usuariosRoleFilter===r?'selected':''}>${r==='todos'?'Todos os perfis':roleLabels[r]||r}</option>`).join('')}
             </select>
+            ${adminUser?.role === 'admin' ? `<button class="btn btn-orange" id="add-user-btn" style="white-space:nowrap">+ Adicionar</button>` : ''}
           </div>
           <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${filtered.length} usuário${filtered.length!==1?'s':''} encontrado${filtered.length!==1?'s':''}</p>
           <div id="users-list">
@@ -1261,6 +1262,11 @@
           usuariosRoleFilter = e.target.value;
           renderUsuariosList(users);
         });
+
+        const addBtn = document.getElementById('add-user-btn');
+        if (addBtn) {
+          addBtn.addEventListener('click', () => openAddUserModal());
+        }
 
         cont.querySelectorAll('.edit-role-btn').forEach(btn => {
           btn.addEventListener('click', () => {
@@ -1316,6 +1322,86 @@
             alert('Erro: ' + e.message);
             saveBtn.disabled = false;
             saveBtn.textContent = 'Salvar';
+          }
+        });
+      }
+
+      function openAddUserModal() {
+        openModal('Adicionar Usuário', `
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px">Nome completo *</label>
+              <input class="search-input" id="new-user-name" placeholder="Ex: João Silva" style="width:100%;box-sizing:border-box" />
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px">E-mail *</label>
+              <input class="search-input" id="new-user-email" type="email" placeholder="joao@email.com" style="width:100%;box-sizing:border-box" />
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px">Perfil *</label>
+              <select class="select-input" id="new-user-role" style="width:100%;box-sizing:border-box">
+                <option value="usuario">Usuário</option>
+                <option value="parceiro">Parceiro</option>
+                <option value="estabelecimento">Estabelecimento</option>
+                <option value="colaborador">Colaborador</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px">Senha temporária *</label>
+              <input class="search-input" id="new-user-password" type="text" placeholder="Mínimo 6 caracteres" style="width:100%;box-sizing:border-box" />
+              <p style="font-size:11px;color:var(--text-muted);margin-top:4px">Compartilhe esta senha com o usuário após a criação.</p>
+            </div>
+            <div id="add-user-error" style="display:none;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:10px;font-size:13px;color:#DC2626"></div>
+          </div>
+        `, `
+          <button class="btn btn-gray" id="add-user-cancel">Cancelar</button>
+          <button class="btn btn-orange" id="add-user-submit">Criar Usuário</button>
+        `);
+
+        document.getElementById('add-user-cancel').addEventListener('click', closeModal);
+
+        document.getElementById('add-user-submit').addEventListener('click', async () => {
+          const name     = document.getElementById('new-user-name').value.trim();
+          const email    = document.getElementById('new-user-email').value.trim();
+          const role     = document.getElementById('new-user-role').value;
+          const password = document.getElementById('new-user-password').value;
+          const errDiv   = document.getElementById('add-user-error');
+          const submitBtn = document.getElementById('add-user-submit');
+
+          errDiv.style.display = 'none';
+
+          if (!name || !email || !password) {
+            errDiv.textContent = 'Preencha todos os campos obrigatórios.';
+            errDiv.style.display = 'block';
+            return;
+          }
+          if (password.length < 6) {
+            errDiv.textContent = 'A senha deve ter ao menos 6 caracteres.';
+            errDiv.style.display = 'block';
+            return;
+          }
+
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Criando…';
+
+          try {
+            const res = await apiFetch('/admin/users', {
+              method: 'POST',
+              body: JSON.stringify({ name, email, role, password }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              const msg = typeof data.error === 'object' ? Object.values(data.error).flat().join(', ') : (data.error || 'Erro');
+              throw new Error(msg);
+            }
+            closeModal();
+            loadUsuariosTab();
+          } catch(e) {
+            errDiv.textContent = e.message;
+            errDiv.style.display = 'block';
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Criar Usuário';
           }
         });
       }
@@ -3403,6 +3489,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
       // =====================================================================
       // ===== MÓDULO: FILA DE CURADORIA (Módulos 5 e 6) =====================
       // =====================================================================
+      let curationMainTab      = 'fila'; // 'fila' | 'publicados'
       let curationStatusFilter = 'pendente';
       let curationCityFilter   = '';
       let curationCatFilter    = '';
@@ -3410,12 +3497,45 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
       let curationMaxScore     = '';
       let curationOffset       = 0;
       const CURATION_LIMIT     = 10;
+      let publishedCityId      = '';
+      let publishedCityName    = '';
 
       async function renderCuradoria() {
         pageContent.innerHTML = `
           <div class="mod-header">
             <h2>🔍 Fila de Curadoria</h2>
           </div>
+          <div class="tabs-row" id="curation-main-tabs" style="margin-bottom:16px">
+            <button class="tab-btn ${curationMainTab==='fila'?'active':''}" data-main="fila">🔍 Fila de Curadoria</button>
+            <button class="tab-btn ${curationMainTab==='publicados'?'active':''}" data-main="publicados">📍 Locais Publicados</button>
+          </div>
+          <div id="curation-main-content"></div>
+        `;
+
+        pageContent.querySelectorAll('.tab-btn[data-main]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            curationMainTab = btn.dataset.main;
+            pageContent.querySelectorAll('.tab-btn[data-main]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderCurationMainContent();
+          });
+        });
+
+        renderCurationMainContent();
+      }
+
+      function renderCurationMainContent() {
+        const el = document.getElementById('curation-main-content');
+        if (!el) return;
+        if (curationMainTab === 'publicados') {
+          renderPublishedTab(el);
+        } else {
+          renderFilaTab(el);
+        }
+      }
+
+      function renderFilaTab(container) {
+        container.innerHTML = `
           <div class="tabs-row" id="curation-tabs">
             <button class="tab-btn ${curationStatusFilter==='pendente'?'active':''}" data-cstatus="pendente">⏳ Pendentes <span id="pending-count-tab"></span></button>
             <button class="tab-btn ${curationStatusFilter==='aprovado'?'active':''}" data-cstatus="aprovado">✅ Aprovados</button>
@@ -3435,11 +3555,11 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           <div id="curation-pagination" style="display:flex;gap:8px;justify-content:center;margin-top:16px"></div>
         `;
 
-        pageContent.querySelectorAll('.tab-btn[data-cstatus]').forEach(btn => {
+        container.querySelectorAll('.tab-btn[data-cstatus]').forEach(btn => {
           btn.addEventListener('click', () => {
             curationStatusFilter = btn.dataset.cstatus;
             curationOffset = 0;
-            pageContent.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            container.querySelectorAll('.tab-btn[data-cstatus]').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             loadCurationList();
           });
@@ -3465,6 +3585,354 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         });
 
         loadCurationList();
+      }
+
+      async function renderPublishedTab(container) {
+        container.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+        try {
+          const res  = await apiFetch('/admin/cities');
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Erro');
+          const activeCities = (data.cities || []).filter(c => c.ativa);
+
+          if (activeCities.length === 0) {
+            container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🏙️</div><p>Nenhuma cidade habilitada.</p></div>`;
+            return;
+          }
+
+          if (!publishedCityId || !activeCities.find(c => c.id === publishedCityId)) {
+            publishedCityId   = activeCities[0].id;
+            publishedCityName = activeCities[0].nome;
+          }
+
+          const cityOptions = activeCities.map(c =>
+            `<option value="${escHtml(c.id)}" ${c.id === publishedCityId ? 'selected' : ''}>${escHtml(c.nome)}</option>`
+          ).join('');
+
+          container.innerHTML = `
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+              <select class="field-input" id="pub-city-select" style="max-width:260px">
+                ${cityOptions}
+              </select>
+              <button class="btn btn-orange" id="pub-add-btn">+ Adicionar local</button>
+            </div>
+            <div id="published-list"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+          `;
+
+          document.getElementById('pub-city-select').addEventListener('change', (e) => {
+            publishedCityId   = e.target.value;
+            publishedCityName = activeCities.find(c => c.id === publishedCityId)?.nome || '';
+            loadPublishedList();
+          });
+
+          document.getElementById('pub-add-btn').addEventListener('click', () => openAddToPublishedModal());
+
+          loadPublishedList();
+        } catch(e) {
+          container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
+        }
+      }
+
+      async function loadPublishedList() {
+        const listEl = document.getElementById('published-list');
+        if (!listEl || !publishedCityId) return;
+        listEl.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+        try {
+          const res  = await apiFetch(`/admin/published/places?city_id=${encodeURIComponent(publishedCityId)}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Erro');
+          renderPublishedList(data.places || []);
+        } catch(e) {
+          listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
+        }
+      }
+
+      function renderPublishedList(places) {
+        const listEl = document.getElementById('published-list');
+        if (!listEl) return;
+
+        if (places.length === 0) {
+          listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📍</div><p>Nenhum local publicado nesta cidade.</p></div>`;
+          return;
+        }
+
+        const isAnalista = adminUser?.role === 'analista';
+
+        listEl.innerHTML = places.map((item, idx) => {
+          const score      = item.kid_score ?? null;
+          const scoreColor = score === null ? '#9ca3af' : score >= 70 ? '#059669' : score >= 40 ? '#D97706' : '#DC2626';
+          return `
+            <div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;padding:14px 16px" data-place-id="${escHtml(item.place_id)}">
+              <!-- Position controls -->
+              <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+                <span style="font-size:11px;color:var(--text-muted);text-align:center;font-weight:600">#${idx + 1}</span>
+                ${!isAnalista ? `
+                  <button class="btn btn-sm" style="padding:3px 8px;font-size:12px" data-up="${escHtml(item.place_id)}" data-idx="${idx}" ${idx === 0 ? 'disabled' : ''} title="Subir">▲</button>
+                  <button class="btn btn-sm" style="padding:3px 8px;font-size:12px" data-down="${escHtml(item.place_id)}" data-idx="${idx}" ${idx === places.length - 1 ? 'disabled' : ''} title="Descer">▼</button>
+                ` : ''}
+              </div>
+              <!-- Photo -->
+              <div style="width:56px;height:56px;flex-shrink:0;border-radius:8px;overflow:hidden;background:#f3f4f6;display:flex;align-items:center;justify-content:center">
+                ${item.cover_photo_url
+                  ? `<img src="${escHtml(item.cover_photo_url)}" alt="foto" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`
+                  : `<span style="font-size:22px">🏪</span>`
+                }
+              </div>
+              <!-- Info -->
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px">
+                  <span style="font-size:14px;font-weight:700">${escHtml(item.name || item.place_id)}</span>
+                  ${item.category ? `<span class="badge" style="background:#e0f2fe;color:#0369a1">${escHtml(item.category)}</span>` : ''}
+                  ${score !== null ? `<span class="badge" style="background:${scoreColor}18;color:${scoreColor}">KidScore ${score}</span>` : ''}
+                  ${item.is_sponsored ? `<span class="badge" style="background:#fff3ef;color:#FF6B35">⭐ Parceiro</span>` : ''}
+                </div>
+                ${item.address ? `<div style="font-size:12px;color:var(--text-muted)">📍 ${escHtml(item.address)}</div>` : ''}
+              </div>
+              <!-- Remove -->
+              ${!isAnalista ? `
+                <button class="btn btn-red btn-sm pub-remove-btn" style="flex-shrink:0" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✕ Remover</button>
+              ` : ''}
+            </div>
+          `;
+        }).join('');
+
+        // Up/Down buttons
+        listEl.querySelectorAll('[data-up]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const placeId = btn.dataset.up;
+            const idx     = parseInt(btn.dataset.idx);
+            if (idx === 0) return;
+            btn.disabled = true;
+            const above = places[idx - 1];
+            const curr  = places[idx];
+            try {
+              await Promise.all([
+                apiFetch(`/admin/published/${encodeURIComponent(placeId)}/order`, { method: 'PATCH', body: JSON.stringify({ order: above.display_order ?? idx - 1 }) }),
+                apiFetch(`/admin/published/${encodeURIComponent(above.place_id)}/order`, { method: 'PATCH', body: JSON.stringify({ order: curr.display_order ?? idx }) }),
+              ]);
+              loadPublishedList();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        listEl.querySelectorAll('[data-down]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const placeId = btn.dataset.down;
+            const idx     = parseInt(btn.dataset.idx);
+            if (idx >= places.length - 1) return;
+            btn.disabled = true;
+            const below = places[idx + 1];
+            const curr  = places[idx];
+            try {
+              await Promise.all([
+                apiFetch(`/admin/published/${encodeURIComponent(placeId)}/order`, { method: 'PATCH', body: JSON.stringify({ order: below.display_order ?? idx + 1 }) }),
+                apiFetch(`/admin/published/${encodeURIComponent(below.place_id)}/order`, { method: 'PATCH', body: JSON.stringify({ order: curr.display_order ?? idx }) }),
+              ]);
+              loadPublishedList();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Remove buttons
+        listEl.querySelectorAll('.pub-remove-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const placeId = btn.dataset.id;
+            const name    = btn.dataset.name;
+            if (!confirm(`Remover "${name}" da lista publicada? O local voltará para pendente.`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/published/${encodeURIComponent(placeId)}`, { method: 'DELETE' });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadPublishedList();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+      }
+
+      function openAddToPublishedModal() {
+        openModal(
+          `Adicionar local — ${escHtml(publishedCityName)}`,
+          `
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+              Busque um estabelecimento no Google Places e adicione-o à lista publicada desta cidade.
+            </p>
+            <div style="position:relative;margin-bottom:16px">
+              <input
+                class="search-input"
+                id="add-pub-q"
+                placeholder="Nome do local (ex: Parque Villa-Lobos)…"
+                autocomplete="off"
+                style="width:100%;box-sizing:border-box"
+              />
+              <div id="add-pub-autocomplete" style="
+                display:none;position:absolute;top:100%;left:0;right:0;z-index:999;
+                background:var(--card);border:1px solid var(--border);border-radius:8px;
+                box-shadow:0 4px 16px rgba(0,0,0,.15);max-height:260px;overflow-y:auto;margin-top:4px
+              "></div>
+            </div>
+            <div id="add-pub-preview" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:4px"></div>
+            <div id="add-pub-status" style="font-size:12px;color:var(--text-muted);min-height:18px"></div>
+          `,
+          `
+            <button class="btn btn-gray" id="add-pub-cancel">Fechar</button>
+            <button class="btn btn-green" id="add-pub-confirm" disabled>+ Confirmar adição</button>
+          `,
+          false,
+        );
+
+        document.getElementById('add-pub-cancel').addEventListener('click', closeModal);
+
+        let selectedPlace = null;
+        let autocompleteTimer = null;
+        const inputEl    = document.getElementById('add-pub-q');
+        const dropEl     = document.getElementById('add-pub-autocomplete');
+        const previewEl  = document.getElementById('add-pub-preview');
+        const statusEl   = document.getElementById('add-pub-status');
+        const confirmBtn = document.getElementById('add-pub-confirm');
+
+        function setStatus(msg) { statusEl.textContent = msg; }
+
+        function clearSelection() {
+          selectedPlace = null;
+          previewEl.style.display = 'none';
+          previewEl.innerHTML = '';
+          confirmBtn.disabled = true;
+        }
+
+        function showPreview(place) {
+          const photoRef = place.photos?.[0]?.photo_reference;
+          const photoSrc = photoRef
+            ? `/api/places/photo?reference=${encodeURIComponent(photoRef)}&maxwidth=120`
+            : null;
+          const typeLabel = (place.types?.[0] || '').replace(/_/g, ' ');
+          previewEl.innerHTML = `
+            <div style="display:flex;gap:12px;align-items:flex-start">
+              ${photoSrc
+                ? `<img src="${photoSrc}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.display='none'">`
+                : `<div style="width:72px;height:72px;border-radius:8px;background:var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:24px">📍</div>`
+              }
+              <div style="min-width:0">
+                <div style="font-weight:700;font-size:14px;margin-bottom:3px">${escHtml(place.name)}</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${escHtml(place.formatted_address || '')}</div>
+                ${typeLabel ? `<span style="font-size:11px;background:var(--orange);color:#fff;border-radius:4px;padding:2px 7px">${escHtml(typeLabel)}</span>` : ''}
+              </div>
+            </div>
+          `;
+          previewEl.style.display = 'block';
+        }
+
+        async function fetchDetails(placeId) {
+          setStatus('Carregando detalhes…');
+          try {
+            const res  = await apiFetch(`/admin/google-places/details/${encodeURIComponent(placeId)}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Erro ao buscar detalhes');
+            selectedPlace = data.place;
+            showPreview(selectedPlace);
+            confirmBtn.disabled = false;
+            setStatus('');
+          } catch(e) {
+            setStatus('Erro: ' + e.message);
+            clearSelection();
+          }
+        }
+
+        function renderDropdown(suggestions) {
+          if (!suggestions || suggestions.length === 0) {
+            dropEl.style.display = 'none';
+            return;
+          }
+          dropEl.innerHTML = suggestions.map((s, i) => `
+            <div
+              class="add-pub-suggestion"
+              data-idx="${i}"
+              style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .15s"
+              onmouseenter="this.style.background='var(--bg)'"
+              onmouseleave="this.style.background=''"
+            >
+              <div style="font-weight:600;font-size:13px">${escHtml(s.main_text)}</div>
+              <div style="font-size:11px;color:var(--text-muted)">${escHtml(s.secondary_text)}</div>
+            </div>
+          `).join('');
+
+          dropEl.querySelectorAll('.add-pub-suggestion').forEach((el, i) => {
+            el.addEventListener('mousedown', async (e) => {
+              e.preventDefault();
+              const s = suggestions[i];
+              inputEl.value = s.main_text;
+              dropEl.style.display = 'none';
+              clearSelection();
+              await fetchDetails(s.place_id);
+            });
+          });
+          dropEl.style.display = 'block';
+        }
+
+        async function fetchAutocomplete(val) {
+          if (val.length < 2) { dropEl.style.display = 'none'; return; }
+          try {
+            const res  = await apiFetch(`/admin/google-places/autocomplete?input=${encodeURIComponent(val)}`);
+            const data = await res.json();
+            renderDropdown(data.suggestions || []);
+          } catch { dropEl.style.display = 'none'; }
+        }
+
+        inputEl.addEventListener('input', () => {
+          clearSelection();
+          clearTimeout(autocompleteTimer);
+          const val = inputEl.value.trim();
+          if (val.length < 2) { dropEl.style.display = 'none'; return; }
+          setStatus('Buscando sugestões…');
+          autocompleteTimer = setTimeout(async () => {
+            await fetchAutocomplete(val);
+            setStatus('');
+          }, 320);
+        });
+
+        inputEl.addEventListener('blur', () => {
+          setTimeout(() => { dropEl.style.display = 'none'; }, 200);
+        });
+
+        inputEl.addEventListener('focus', () => {
+          if (dropEl.innerHTML) dropEl.style.display = 'block';
+        });
+
+        confirmBtn.addEventListener('click', async () => {
+          if (!selectedPlace) return;
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = 'Adicionando…';
+          setStatus('');
+          try {
+            const typeLabel = (selectedPlace.types?.[0] || '').replace(/_/g, ' ');
+            const body = {
+              place_id:       selectedPlace.place_id,
+              name:           selectedPlace.name,
+              address:        selectedPlace.formatted_address || '',
+              category:       typeLabel,
+              city:           publishedCityName,
+              ciudad_id:      publishedCityId,
+              lat:            selectedPlace.location?.lat ?? 0,
+              lng:            selectedPlace.location?.lng ?? 0,
+              photo_reference: selectedPlace.photos?.[0]?.photo_reference || undefined,
+            };
+            const res = await apiFetch('/admin/google-places/ingest-and-publish', {
+              method: 'POST',
+              body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Erro ao adicionar');
+            setStatus('Local adicionado com sucesso!');
+            confirmBtn.textContent = '✓ Adicionado';
+            loadPublishedList();
+            setTimeout(closeModal, 1200);
+          } catch(e) {
+            setStatus('Erro: ' + e.message);
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '+ Confirmar adição';
+          }
+        });
+
+        inputEl.focus();
       }
 
       async function loadCurationList() {
