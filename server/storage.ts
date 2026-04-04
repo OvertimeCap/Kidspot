@@ -17,6 +17,7 @@ import {
   placeKidspotMeta,
   sponsorshipPlans,
   sponsorshipContracts,
+  cityDemand,
   type InsertPlace,
   type InsertReview,
   type PlaceKidspot,
@@ -42,6 +43,7 @@ import {
   type SponsorshipPlan,
   type SponsorshipContract,
   type SponsorshipContractStatus,
+  type CityDemand,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -999,6 +1001,18 @@ export async function listCities(search?: string): Promise<City[]> {
   return db.select().from(cities).orderBy(desc(cities.criado_em));
 }
 
+export async function listActiveCities(search?: string): Promise<{ id: string; nome: string; estado: string; latitude: string; longitude: string }[]> {
+  const conditions = [eq(cities.ativa, true)];
+  if (search && search.trim()) {
+    conditions.push(ilike(cities.nome, `%${search.trim()}%`));
+  }
+  return db
+    .select({ id: cities.id, nome: cities.nome, estado: cities.estado, latitude: cities.latitude, longitude: cities.longitude })
+    .from(cities)
+    .where(and(...conditions))
+    .orderBy(asc(cities.nome));
+}
+
 export async function getCityById(id: string): Promise<City | null> {
   const [city] = await db.select().from(cities).where(eq(cities.id, id)).limit(1);
   return city ?? null;
@@ -1076,6 +1090,7 @@ export type CurationItem = {
   updated_at: Date;
   curated_at: Date | null;
   city: string;
+  place_type: "comer" | "parques" | null;
   photos: PlacePhoto[];
 };
 
@@ -1085,16 +1100,18 @@ export async function listCurationQueue(opts: {
   category?: string;
   minKidScore?: number;
   maxKidScore?: number;
+  placeType?: "comer" | "parques";
   limit?: number;
   offset?: number;
 }): Promise<{ items: CurationItem[]; total: number }> {
-  const { status = "pendente", city, category, minKidScore, maxKidScore, limit = 20, offset = 0 } = opts;
+  const { status = "pendente", city, category, minKidScore, maxKidScore, placeType, limit = 20, offset = 0 } = opts;
 
   const conditions = [eq(placeKidspotMeta.curation_status, status)];
   if (city) conditions.push(ilike(placesKidspot.city, `%${city}%`));
   if (category) conditions.push(ilike(placeKidspotMeta.category, `%${category}%`));
   if (minKidScore != null) conditions.push(gte(placeKidspotMeta.kid_score, minKidScore));
   if (maxKidScore != null) conditions.push(lte(placeKidspotMeta.kid_score, maxKidScore));
+  if (placeType) conditions.push(eq(placeKidspotMeta.place_type, placeType));
 
   const where = and(...conditions);
 
@@ -1113,6 +1130,7 @@ export async function listCurationQueue(opts: {
         ingested_at: placeKidspotMeta.ingested_at,
         updated_at: placeKidspotMeta.updated_at,
         curated_at: placeKidspotMeta.curated_at,
+        place_type: placeKidspotMeta.place_type,
         city: placesKidspot.city,
       })
       .from(placeKidspotMeta)
@@ -1236,7 +1254,7 @@ export async function upsertPlaceWithCity(data: {
 export async function approveCurationItem(
   placeId: string,
   curatedBy: string,
-  edits?: { name?: string; description?: string; custom_criteria?: unknown },
+  edits?: { name?: string; description?: string; custom_criteria?: unknown; place_type?: "comer" | "parques" },
 ): Promise<void> {
   const set: Record<string, unknown> = {
     curation_status: "aprovado",
@@ -1247,6 +1265,7 @@ export async function approveCurationItem(
   if (edits?.name !== undefined) set.name = edits.name;
   if (edits?.description !== undefined) set.description = edits.description;
   if (edits?.custom_criteria !== undefined) set.custom_criteria = edits.custom_criteria;
+  if (edits?.place_type !== undefined) set.place_type = edits.place_type;
 
   await db
     .update(placeKidspotMeta)
@@ -1592,7 +1611,7 @@ export async function checkCityByCoords(
   }
 
   if (!nearest) return null;
-  return { city: nearest, enabled: nearest.ativa, distance_km: nearestDist };
+  return { city: nearest, enabled: nearest.ativa && nearestDist <= nearest.raio_km, distance_km: nearestDist };
 }
 
 export type CuratedPlaceRow = {
@@ -1609,7 +1628,13 @@ export type CuratedPlaceRow = {
   lng: string;
 };
 
-export async function getPublishedPlacesByCity(cityId: string): Promise<CuratedPlaceRow[]> {
+export async function getPublishedPlacesByCity(cityId: string, placeType?: "comer" | "parques"): Promise<CuratedPlaceRow[]> {
+  const conditions = [
+    eq(placeKidspotMeta.curation_status, "aprovado"),
+    eq(placesKidspot.ciudad_id, cityId),
+  ];
+  if (placeType) conditions.push(eq(placeKidspotMeta.place_type, placeType));
+
   const rows = await db
     .select({
       place_id: placeKidspotMeta.place_id,
@@ -1624,12 +1649,7 @@ export async function getPublishedPlacesByCity(cityId: string): Promise<CuratedP
     })
     .from(placeKidspotMeta)
     .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
-    .where(
-      and(
-        eq(placeKidspotMeta.curation_status, "aprovado"),
-        eq(placesKidspot.ciudad_id, cityId),
-      ),
-    )
+    .where(and(...conditions))
     .orderBy(asc(placeKidspotMeta.display_order), asc(placeKidspotMeta.ingested_at));
 
   if (rows.length === 0) return [];
@@ -1807,4 +1827,52 @@ export async function searchPlacesForPublishing(cityId: string, q: string): Prom
     )
     .orderBy(desc(placeKidspotMeta.kid_score))
     .limit(20);
+}
+
+/* ------------------------------------------------------------------ */
+/* City Demand                                                          */
+/* ------------------------------------------------------------------ */
+
+function extractEstado(label: string): string | null {
+  const parts = label.split(',').map(s => s.trim());
+  if (parts.length >= 2) return parts[parts.length - 2] || null;
+  return null;
+}
+
+export async function recordCityDemand(
+  cidadeLabel: string,
+  latitude: number,
+  longitude: number,
+  estadoOverride?: string | null,
+): Promise<void> {
+  const estado = estadoOverride !== undefined ? estadoOverride : extractEstado(cidadeLabel);
+  await db
+    .insert(cityDemand)
+    .values({
+      cidade_label: cidadeLabel,
+      estado,
+      latitude: String(latitude),
+      longitude: String(longitude),
+      count: 1,
+      last_searched_at: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: cityDemand.cidade_label,
+      set: {
+        count: sql`${cityDemand.count} + 1`,
+        last_searched_at: new Date(),
+      },
+    });
+}
+
+export async function listCityDemand(estado?: string): Promise<CityDemand[]> {
+  return db
+    .select()
+    .from(cityDemand)
+    .where(estado ? eq(cityDemand.estado, estado) : undefined)
+    .orderBy(desc(cityDemand.count), desc(cityDemand.last_searched_at));
+}
+
+export async function deleteCityDemand(id: string): Promise<void> {
+  await db.delete(cityDemand).where(eq(cityDemand.id, id));
 }

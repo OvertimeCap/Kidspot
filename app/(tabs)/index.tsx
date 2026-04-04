@@ -17,7 +17,6 @@ import Colors from "@/constants/colors";
 import {
   checkCity,
   getCuratedPlaces,
-  requestCityActivation,
   haversineKm,
   formatDistance,
   type CuratedPlace,
@@ -114,42 +113,14 @@ function PlaceCard({
   );
 }
 
-function CityUnavailableScreen({
-  cityName,
-  onRequest,
-  requesting,
-  requested,
-}: {
-  cityName: string | null;
-  onRequest: () => void;
-  requesting: boolean;
-  requested: boolean;
-}) {
+function CityUnavailableScreen({ cityName }: { cityName: string | null }) {
   return (
     <View style={styles.centered}>
       <Ionicons name="location-outline" size={52} color={Colors.textLight} />
       <Text style={styles.cityUnavailableTitle}>Cidade indisponível</Text>
       <Text style={styles.cityUnavailableText}>
-        {cityName ? `${cityName} ainda` : "Esta cidade ainda"} não está disponível no KidSpot.{"\n"}Em breve por aqui!
+        {cityName ? `${cityName} ainda` : "Esta cidade ainda"} não está disponível no KidSpot.{"\n"}Em breve nesta região.
       </Text>
-      {requested ? (
-        <View style={styles.requestedBadge}>
-          <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
-          <Text style={styles.requestedText}>Solicitação enviada!</Text>
-        </View>
-      ) : (
-        <Pressable
-          style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed, requesting && styles.btnDisabled]}
-          onPress={onRequest}
-          disabled={requesting}
-        >
-          {requesting
-            ? <ActivityIndicator size="small" color="#fff" />
-            : <Ionicons name="send-outline" size={16} color="#fff" />
-          }
-          <Text style={styles.primaryBtnText}>Solicitar habilitação</Text>
-        </Pressable>
-      )}
     </View>
   );
 }
@@ -161,25 +132,22 @@ export default function HomeScreen() {
   const [results, setResults] = useState<CuratedPlace[]>([]);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  const [activeFilter, setActiveFilter] = useState<"comer" | "parques">("comer");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [searched, setSearched] = useState(false);
   const [cityCheck, setCityCheck] = useState<CityCheckResult | null>(null);
   const [placePhotoRefs] = useState<PlacePhotoMap>({});
-  const [requesting, setRequesting] = useState(false);
-  const [requested, setRequested] = useState(false);
-
   const didAutoSearch = useRef(false);
 
   const doSearch = useCallback(
-    async (lat: number, lng: number, label?: string) => {
+    async (lat: number, lng: number, label?: string, placeType?: "comer" | "parques") => {
       setLoading(true);
       setError(null);
       setCityCheck(null);
-      setRequested(false);
       try {
-        const check = await checkCity(lat, lng);
+        const check = await checkCity(lat, lng, label);
         setCityCheck(check);
         setUserLocation({ lat, lng });
         if (label) setActiveLabel(label);
@@ -190,7 +158,8 @@ export default function HomeScreen() {
           return;
         }
 
-        const places = await getCuratedPlaces(check.city_id);
+        const filter = placeType ?? activeFilter;
+        const places = await getCuratedPlaces(check.city_id, filter);
         setResults(places);
         setSearched(true);
       } catch {
@@ -199,8 +168,20 @@ export default function HomeScreen() {
         setLoading(false);
       }
     },
-    [],
+    [activeFilter],
   );
+
+  const handleFilterChange = useCallback(async (type: "comer" | "parques") => {
+    setActiveFilter(type);
+    if (cityCheck?.city_id) {
+      try {
+        const places = await getCuratedPlaces(cityCheck.city_id, type);
+        setResults(places);
+      } catch {
+        // silently ignore
+      }
+    }
+  }, [cityCheck]);
 
   const handleSearchNearby = useCallback(async () => {
     setLoading(true);
@@ -247,18 +228,9 @@ export default function HomeScreen() {
     });
   }, [userLocation]);
 
-  const handleRequestActivation = useCallback(async () => {
-    if (!userLocation) return;
-    setRequesting(true);
-    try {
-      await requestCityActivation(userLocation.lat, userLocation.lng, cityCheck?.city_name ?? null);
-      setRequested(true);
-    } catch {
-      // fail silently — the button stays enabled for retry
-    } finally {
-      setRequesting(false);
-    }
-  }, [userLocation, cityCheck]);
+  const openCityPicker = useCallback(() => {
+    router.push({ pathname: "/filtros", params: { mode: "cities" } });
+  }, []);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const cityUnavailable = searched && !loading && !error && cityCheck && !cityCheck.enabled;
@@ -315,14 +287,14 @@ export default function HomeScreen() {
         <View style={styles.centered}>
           <Ionicons name="location-outline" size={48} color={Colors.textLight} />
           <Text style={styles.emptyText}>
-            Permissão de localização negada.{"\n"}Escolha uma cidade nos filtros.
+            Permissão de localização negada.{"\n"}Escolha uma cidade para continuar.
           </Text>
           <Pressable
             style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
-            onPress={openFiltros}
+            onPress={openCityPicker}
           >
-            <Ionicons name="options-outline" size={16} color="#fff" />
-            <Text style={styles.primaryBtnText}>Filtros</Text>
+            <Ionicons name="map-outline" size={16} color="#fff" />
+            <Text style={styles.primaryBtnText}>Escolher Cidade</Text>
           </Pressable>
         </View>
       )}
@@ -330,9 +302,6 @@ export default function HomeScreen() {
       {cityUnavailable && (
         <CityUnavailableScreen
           cityName={cityCheck?.city_name ?? null}
-          onRequest={handleRequestActivation}
-          requesting={requesting}
-          requested={requested}
         />
       )}
 
@@ -354,21 +323,27 @@ export default function HomeScreen() {
                 </Text>
 
                 {activeLabel && (
-                  <View style={styles.locationRow}>
+                  <Pressable onPress={openFiltros} style={styles.locationRow}>
                     <Ionicons name="location" size={13} color={Colors.primary} />
                     <Text style={styles.locationLabel} numberOfLines={1}>
                       {activeLabel}
                     </Text>
-                  </View>
+                    <Ionicons name="chevron-down" size={13} color={Colors.primary} />
+                  </Pressable>
                 )}
 
                 <View style={styles.filterRow}>
                   <Pressable
-                    style={({ pressed }) => [styles.filtrosBtn, pressed && styles.btnPressed]}
-                    onPress={openFiltros}
+                    style={[styles.filterTypeBtn, activeFilter === "comer" && styles.filterTypeBtnActive]}
+                    onPress={() => handleFilterChange("comer")}
                   >
-                    <Ionicons name="options-outline" size={15} color={Colors.primary} />
-                    <Text style={styles.filtrosBtnText}>Filtros</Text>
+                    <Text style={[styles.filterTypeBtnText, activeFilter === "comer" && styles.filterTypeBtnTextActive]}>🍽 Comer</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.filterTypeBtn, activeFilter === "parques" && styles.filterTypeBtnActive]}
+                    onPress={() => handleFilterChange("parques")}
+                  >
+                    <Text style={[styles.filterTypeBtnText, activeFilter === "parques" && styles.filterTypeBtnTextActive]}>🌳 Parques</Text>
                   </Pressable>
                 </View>
               </View>
@@ -378,14 +353,14 @@ export default function HomeScreen() {
             <View style={styles.centered}>
               <Ionicons name="sad-outline" size={48} color={Colors.textLight} />
               <Text style={styles.emptyText}>
-                Nenhum lugar encontrado.{"\n"}Tente outra localização nos filtros.
+                Nenhum lugar encontrado.{"\n"}Tente outra cidade.
               </Text>
               <Pressable
                 style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
-                onPress={openFiltros}
+                onPress={openCityPicker}
               >
-                <Ionicons name="options-outline" size={16} color="#fff" />
-                <Text style={styles.primaryBtnText}>Filtros</Text>
+                <Ionicons name="map-outline" size={16} color="#fff" />
+                <Text style={styles.primaryBtnText}>Escolher Cidade</Text>
               </Pressable>
             </View>
           }
@@ -559,21 +534,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexWrap: "wrap",
   },
-  filtrosBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
+  filterTypeBtn: {
     borderWidth: 1.5,
     borderColor: Colors.primary,
     borderRadius: 20,
     paddingVertical: 6,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
-  filtrosBtnText: {
+  filterTypeBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  filterTypeBtnText: {
     color: Colors.primary,
     fontSize: 13,
     fontWeight: "600",
     fontFamily: "Inter_600SemiBold",
+  },
+  filterTypeBtnTextActive: {
+    color: "#fff",
   },
   card: {
     backgroundColor: "#fff",

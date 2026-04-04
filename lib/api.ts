@@ -300,15 +300,32 @@ export type CuratedPlace = {
   lng: string;
 };
 
-export async function checkCity(lat: number, lng: number): Promise<CityCheckResult> {
-  const res = await apiRequest("GET", `/api/cities/check?lat=${lat}&lng=${lng}`);
+export async function checkCity(lat: number, lng: number, label?: string): Promise<CityCheckResult> {
+  const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
+  if (label) params.set("label", label);
+  const res = await apiRequest("GET", `/api/cities/check?${params.toString()}`);
   return res.json();
 }
 
-export async function getCuratedPlaces(cityId: string): Promise<CuratedPlace[]> {
-  const res = await apiRequest("GET", `/api/cities/${encodeURIComponent(cityId)}/places`);
+export async function getCuratedPlaces(cityId: string, placeType: "comer" | "parques" = "comer"): Promise<CuratedPlace[]> {
+  const res = await apiRequest("GET", `/api/cities/${encodeURIComponent(cityId)}/places?place_type=${placeType}`);
   const data = await res.json();
   return data.places ?? [];
+}
+
+export type ActiveCity = {
+  id: string;
+  nome: string;
+  estado: string;
+  latitude: string;
+  longitude: string;
+};
+
+export async function getActiveCities(search?: string): Promise<ActiveCity[]> {
+  const params = search ? `?search=${encodeURIComponent(search)}` : "";
+  const res = await apiRequest("GET", `/api/cities/list${params}`);
+  const data = await res.json();
+  return data.cities ?? [];
 }
 
 export async function requestCityActivation(lat: number, lng: number, cityName: string | null): Promise<void> {

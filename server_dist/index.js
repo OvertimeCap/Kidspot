@@ -382,7 +382,8 @@ import {
   placePhotos,
   placeKidspotMeta,
   sponsorshipPlans,
-  sponsorshipContracts
+  sponsorshipContracts,
+  cityDemand
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 async function getNonApprovedPlaceIds(placeIds) {
@@ -973,6 +974,13 @@ async function listCities(search) {
   }
   return db.select().from(cities).orderBy(desc(cities.criado_em));
 }
+async function listActiveCities(search) {
+  const conditions = [eq(cities.ativa, true)];
+  if (search && search.trim()) {
+    conditions.push(ilike(cities.nome, `%${search.trim()}%`));
+  }
+  return db.select({ id: cities.id, nome: cities.nome, estado: cities.estado, latitude: cities.latitude, longitude: cities.longitude }).from(cities).where(and(...conditions)).orderBy(asc(cities.nome));
+}
 async function getCityById(id) {
   const [city] = await db.select().from(cities).where(eq(cities.id, id)).limit(1);
   return city ?? null;
@@ -1025,7 +1033,7 @@ async function deleteCity(id) {
   return result.length > 0;
 }
 async function listCurationQueue(opts) {
-  const { status = "pendente", city, category, minKidScore, maxKidScore, limit = 20, offset = 0 } = opts;
+  const { status = "pendente", city, category, minKidScore, maxKidScore, placeType, limit = 20, offset = 0 } = opts;
   const conditions = [eq(placeKidspotMeta.curation_status, status)];
   if (city)
     conditions.push(ilike(placesKidspot.city, `%${city}%`));
@@ -1035,6 +1043,8 @@ async function listCurationQueue(opts) {
     conditions.push(gte(placeKidspotMeta.kid_score, minKidScore));
   if (maxKidScore != null)
     conditions.push(lte(placeKidspotMeta.kid_score, maxKidScore));
+  if (placeType)
+    conditions.push(eq(placeKidspotMeta.place_type, placeType));
   const where = and(...conditions);
   const [rows, countResult] = await Promise.all([
     db.select({
@@ -1050,6 +1060,7 @@ async function listCurationQueue(opts) {
       ingested_at: placeKidspotMeta.ingested_at,
       updated_at: placeKidspotMeta.updated_at,
       curated_at: placeKidspotMeta.curated_at,
+      place_type: placeKidspotMeta.place_type,
       city: placesKidspot.city
     }).from(placeKidspotMeta).innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id)).where(where).orderBy(desc(placeKidspotMeta.ingested_at)).limit(limit).offset(offset),
     db.select({ count: sql`count(*)::int` }).from(placeKidspotMeta).innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id)).where(where)
@@ -1135,6 +1146,8 @@ async function approveCurationItem(placeId, curatedBy, edits) {
     set.description = edits.description;
   if (edits?.custom_criteria !== void 0)
     set.custom_criteria = edits.custom_criteria;
+  if (edits?.place_type !== void 0)
+    set.place_type = edits.place_type;
   await db.update(placeKidspotMeta).set(set).where(eq(placeKidspotMeta.place_id, placeId));
 }
 async function rejectCurationItem(placeId, curatedBy) {
@@ -1337,9 +1350,15 @@ async function checkCityByCoords(lat, lng) {
   }
   if (!nearest)
     return null;
-  return { city: nearest, enabled: nearest.ativa, distance_km: nearestDist };
+  return { city: nearest, enabled: nearest.ativa && nearestDist <= nearest.raio_km, distance_km: nearestDist };
 }
-async function getPublishedPlacesByCity(cityId) {
+async function getPublishedPlacesByCity(cityId, placeType) {
+  const conditions = [
+    eq(placeKidspotMeta.curation_status, "aprovado"),
+    eq(placesKidspot.ciudad_id, cityId)
+  ];
+  if (placeType)
+    conditions.push(eq(placeKidspotMeta.place_type, placeType));
   const rows = await db.select({
     place_id: placeKidspotMeta.place_id,
     name: placeKidspotMeta.name,
@@ -1350,26 +1369,24 @@ async function getPublishedPlacesByCity(cityId) {
     ai_evidences: placeKidspotMeta.ai_evidences,
     lat: placesKidspot.lat,
     lng: placesKidspot.lng
-  }).from(placeKidspotMeta).innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id)).where(
-    and(
-      eq(placeKidspotMeta.curation_status, "aprovado"),
-      eq(placesKidspot.ciudad_id, cityId)
-    )
-  ).orderBy(asc(placeKidspotMeta.display_order), asc(placeKidspotMeta.ingested_at));
+  }).from(placeKidspotMeta).innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id)).where(and(...conditions)).orderBy(asc(placeKidspotMeta.display_order), asc(placeKidspotMeta.ingested_at));
   if (rows.length === 0)
     return [];
   const placeIds = rows.map((r) => r.place_id);
-  const [coverPhotos, sponsoredMap] = await Promise.all([
-    db.select({ place_id: placePhotos.place_id, url: placePhotos.url }).from(placePhotos).where(
+  const [allPhotos, sponsoredMap] = await Promise.all([
+    db.select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover }).from(placePhotos).where(
       and(
         inArray(placePhotos.place_id, placeIds),
-        eq(placePhotos.is_cover, true),
         eq(placePhotos.deleted, false)
       )
-    ),
+    ).orderBy(desc(placePhotos.is_cover), asc(placePhotos.order)),
     getActiveSponsoredPlaceIds()
   ]);
-  const coverByPlace = new Map(coverPhotos.map((p) => [p.place_id, p.url]));
+  const coverByPlace = /* @__PURE__ */ new Map();
+  for (const p of allPhotos) {
+    if (!coverByPlace.has(p.place_id))
+      coverByPlace.set(p.place_id, p.url);
+  }
   return rows.map((r) => {
     const evidences = Array.isArray(r.ai_evidences) ? r.ai_evidences : [];
     return {
@@ -1430,17 +1447,20 @@ async function getPublishedPlacesByCityAdmin(cityId) {
   if (rows.length === 0)
     return [];
   const placeIds = rows.map((r) => r.place_id);
-  const [coverPhotos, sponsoredMap] = await Promise.all([
-    db.select({ place_id: placePhotos.place_id, url: placePhotos.url }).from(placePhotos).where(
+  const [allPhotos, sponsoredMap] = await Promise.all([
+    db.select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover }).from(placePhotos).where(
       and(
         inArray(placePhotos.place_id, placeIds),
-        eq(placePhotos.is_cover, true),
         eq(placePhotos.deleted, false)
       )
-    ),
+    ).orderBy(desc(placePhotos.is_cover), asc(placePhotos.order)),
     getActiveSponsoredPlaceIds()
   ]);
-  const coverByPlace = new Map(coverPhotos.map((p) => [p.place_id, p.url]));
+  const coverByPlace = /* @__PURE__ */ new Map();
+  for (const p of allPhotos) {
+    if (!coverByPlace.has(p.place_id))
+      coverByPlace.set(p.place_id, p.url);
+  }
   return rows.map((r) => {
     const evidences = Array.isArray(r.ai_evidences) ? r.ai_evidences : [];
     return {
@@ -1476,6 +1496,35 @@ async function searchPlacesForPublishing(cityId, q) {
       ) : void 0
     )
   ).orderBy(desc(placeKidspotMeta.kid_score)).limit(20);
+}
+function extractEstado(label) {
+  const parts = label.split(",").map((s) => s.trim());
+  if (parts.length >= 2)
+    return parts[parts.length - 2] || null;
+  return null;
+}
+async function recordCityDemand(cidadeLabel, latitude, longitude, estadoOverride) {
+  const estado = estadoOverride !== void 0 ? estadoOverride : extractEstado(cidadeLabel);
+  await db.insert(cityDemand).values({
+    cidade_label: cidadeLabel,
+    estado,
+    latitude: String(latitude),
+    longitude: String(longitude),
+    count: 1,
+    last_searched_at: /* @__PURE__ */ new Date()
+  }).onConflictDoUpdate({
+    target: cityDemand.cidade_label,
+    set: {
+      count: sql`${cityDemand.count} + 1`,
+      last_searched_at: /* @__PURE__ */ new Date()
+    }
+  });
+}
+async function listCityDemand(estado) {
+  return db.select().from(cityDemand).where(estado ? eq(cityDemand.estado, estado) : void 0).orderBy(desc(cityDemand.count), desc(cityDemand.last_searched_at));
+}
+async function deleteCityDemand(id) {
+  await db.delete(cityDemand).where(eq(cityDemand.id, id));
 }
 
 // server/foursquare.ts
@@ -2075,6 +2124,7 @@ if (!GOOGLE_PLACES_API_KEY) {
   console.warn("GOOGLE_PLACES_API_KEY is not set \u2014 Places API calls will fail");
 }
 var PLACES_BASE = "https://maps.googleapis.com/maps/api/place";
+var GEOCODING_BASE = "https://maps.googleapis.com/maps/api/geocode";
 var FETCH_TIMEOUT_MS2 = 8e3;
 async function fetchWithTimeout2(url, label) {
   const controller = new AbortController();
@@ -2543,6 +2593,29 @@ async function getPlaceDetails(placeId) {
     website: r.website,
     formatted_phone_number: r.formatted_phone_number
   };
+}
+async function reverseGeocodeCity(lat, lng) {
+  const qs = new URLSearchParams({
+    latlng: `${lat},${lng}`,
+    result_type: "locality",
+    language: "pt-BR",
+    key: GOOGLE_PLACES_API_KEY
+  });
+  try {
+    const res = await fetchWithTimeout2(`${GEOCODING_BASE}/json?${qs.toString()}`, "reverseGeocodeCity");
+    const data = await res.json();
+    const result = data.results?.[0];
+    if (!result)
+      return null;
+    const label = result.formatted_address;
+    const stateComponent = result.address_components?.find(
+      (c) => c.types.includes("administrative_area_level_1")
+    );
+    const estado = stateComponent?.long_name ?? null;
+    return { label, estado };
+  } catch {
+    return null;
+  }
 }
 
 // server/email.ts
@@ -4573,6 +4646,41 @@ ${combinedReviews}`
     };
     res.json({ role, permissions });
   });
+  app2.get(
+    "/api/backoffice/demanda-cidades",
+    requireAuth,
+    async (req, res) => {
+      const caller = await getUserById(req.user.userId);
+      if (!caller || caller.role !== "admin") {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      try {
+        const estado = req.query.estado || void 0;
+        const items = await listCityDemand(estado);
+        res.json({ demands: items, total: items.length });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
+  app2.delete(
+    "/api/backoffice/demanda-cidades/:id",
+    requireAuth,
+    async (req, res) => {
+      const caller = await getUserById(req.user.userId);
+      if (!caller || caller.role !== "admin") {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+      try {
+        await deleteCityDemand(req.params.id);
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
   app2.post("/api/feedback", async (req, res) => {
     const parsed = insertFeedbackSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -5416,6 +5524,7 @@ ${combinedReviews}`
       const maxKidScore = req.query.max_kid_score ? parseInt(req.query.max_kid_score, 10) : void 0;
       const limit = Math.min(parseInt(req.query.limit || "20", 10), 100);
       const offset = parseInt(req.query.offset || "0", 10);
+      const placeType = req.query.place_type;
       const validStatuses = ["pendente", "aprovado", "rejeitado"];
       if (!validStatuses.includes(status)) {
         res.status(400).json({ error: "status inv\xE1lido" });
@@ -5428,6 +5537,7 @@ ${combinedReviews}`
           category,
           minKidScore,
           maxKidScore,
+          placeType: placeType === "comer" || placeType === "parques" ? placeType : void 0,
           limit,
           offset
         });
@@ -5455,7 +5565,8 @@ ${combinedReviews}`
   const curationApproveSchema = z.object({
     name: z.string().optional(),
     description: z.string().optional(),
-    custom_criteria: z.record(z.unknown()).optional()
+    custom_criteria: z.record(z.unknown()).optional(),
+    place_type: z.enum(["comer", "parques"]).optional()
   });
   app2.post(
     "/api/admin/curation/:placeId/approve",
@@ -5777,12 +5888,28 @@ ${combinedReviews}`
   app2.get("/api/cities/check", async (req, res) => {
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
+    const label = (req.query.label || "").trim() || null;
     if (isNaN(lat) || isNaN(lng)) {
       res.status(400).json({ error: "lat e lng s\xE3o obrigat\xF3rios" });
       return;
     }
     try {
       const result = await checkCityByCoords(lat, lng);
+      if (!result || !result.enabled) {
+        (async () => {
+          try {
+            if (label) {
+              await recordCityDemand(label, lat, lng);
+            } else {
+              const geo = await reverseGeocodeCity(lat, lng);
+              if (geo)
+                await recordCityDemand(geo.label, lat, lng, geo.estado);
+            }
+          } catch (e) {
+            console.error("recordCityDemand error:", e);
+          }
+        })();
+      }
       if (!result) {
         res.json({ enabled: false, city_id: null, city_name: null });
         return;
@@ -5798,10 +5925,24 @@ ${combinedReviews}`
       res.status(500).json({ error: err.message });
     }
   });
+  app2.get("/api/cities/list", async (req, res) => {
+    const search = req.query.search;
+    try {
+      const cities4 = await listActiveCities(search);
+      res.json({ cities: cities4 });
+    } catch (err) {
+      console.error("List active cities error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
   app2.get("/api/cities/:cityId/places", async (req, res) => {
     const cityId = req.params.cityId;
+    const placeType = req.query.place_type;
     try {
-      const places = await getPublishedPlacesByCity(cityId);
+      const places = await getPublishedPlacesByCity(
+        cityId,
+        placeType === "comer" || placeType === "parques" ? placeType : void 0
+      );
       res.json({ places });
     } catch (err) {
       console.error("Curated places error:", err);
