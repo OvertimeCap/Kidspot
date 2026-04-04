@@ -175,6 +175,20 @@ export async function createUser(data: {
   return user;
 }
 
+export async function adminCreateUser(data: {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+}): Promise<User> {
+  const password_hash = await bcrypt.hash(data.password, 10);
+  const [user] = await db
+    .insert(users)
+    .values({ name: data.name, email: data.email.toLowerCase(), password_hash, role: data.role })
+    .returning();
+  return user;
+}
+
 export async function findUserByEmail(email: string): Promise<User | null> {
   const user = await db.query.users.findFirst({
     where: eq(users.email, email.toLowerCase()),
@@ -1193,6 +1207,32 @@ export async function upsertPlaceMeta(data: {
     });
 }
 
+export async function upsertPlaceWithCity(data: {
+  place_id: string;
+  city: string;
+  ciudad_id: string;
+  lat: number;
+  lng: number;
+}): Promise<void> {
+  await db
+    .insert(placesKidspot)
+    .values({
+      place_id: data.place_id,
+      city: data.city,
+      ciudad_id: data.ciudad_id,
+      lat: String(data.lat),
+      lng: String(data.lng),
+    })
+    .onConflictDoUpdate({
+      target: placesKidspot.place_id,
+      set: {
+        ciudad_id: data.ciudad_id,
+        lat: String(data.lat),
+        lng: String(data.lng),
+      },
+    });
+}
+
 export async function approveCurationItem(
   placeId: string,
   curatedBy: string,
@@ -1515,4 +1555,256 @@ export async function getSponsorshipPerformance(contractId: string): Promise<{
     detail_accesses: stats?.detail_access_count ?? 0,
     avg_position: null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* City-based curated places (Feature #23)                             */
+/* ------------------------------------------------------------------ */
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLng = (lng2 - lng1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export async function checkCityByCoords(
+  lat: number,
+  lng: number,
+): Promise<{ city: City; enabled: boolean; distance_km: number } | null> {
+  const allCities = await db.select().from(cities);
+  if (allCities.length === 0) return null;
+
+  let nearest: City | null = null;
+  let nearestDist = Infinity;
+
+  for (const city of allCities) {
+    const dist = haversineKm(lat, lng, parseFloat(city.latitude), parseFloat(city.longitude));
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = city;
+    }
+  }
+
+  if (!nearest) return null;
+  return { city: nearest, enabled: nearest.ativa, distance_km: nearestDist };
+}
+
+export type CuratedPlaceRow = {
+  place_id: string;
+  name: string | null;
+  address: string | null;
+  category: string | null;
+  kid_score: number | null;
+  display_order: number | null;
+  cover_photo_url: string | null;
+  is_sponsored: boolean;
+  family_highlight: string | null;
+  lat: string;
+  lng: string;
+};
+
+export async function getPublishedPlacesByCity(cityId: string): Promise<CuratedPlaceRow[]> {
+  const rows = await db
+    .select({
+      place_id: placeKidspotMeta.place_id,
+      name: placeKidspotMeta.name,
+      address: placeKidspotMeta.address,
+      category: placeKidspotMeta.category,
+      kid_score: placeKidspotMeta.kid_score,
+      display_order: placeKidspotMeta.display_order,
+      ai_evidences: placeKidspotMeta.ai_evidences,
+      lat: placesKidspot.lat,
+      lng: placesKidspot.lng,
+    })
+    .from(placeKidspotMeta)
+    .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
+    .where(
+      and(
+        eq(placeKidspotMeta.curation_status, "aprovado"),
+        eq(placesKidspot.ciudad_id, cityId),
+      ),
+    )
+    .orderBy(asc(placeKidspotMeta.display_order), asc(placeKidspotMeta.ingested_at));
+
+  if (rows.length === 0) return [];
+
+  const placeIds = rows.map((r) => r.place_id);
+  const [allPhotos, sponsoredMap] = await Promise.all([
+    db
+      .select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover })
+      .from(placePhotos)
+      .where(
+        and(
+          inArray(placePhotos.place_id, placeIds),
+          eq(placePhotos.deleted, false),
+        ),
+      )
+      .orderBy(desc(placePhotos.is_cover), asc(placePhotos.order)),
+    getActiveSponsoredPlaceIds(),
+  ]);
+
+  const coverByPlace = new Map<string, string>();
+  for (const p of allPhotos) {
+    if (!coverByPlace.has(p.place_id)) coverByPlace.set(p.place_id, p.url);
+  }
+
+  return rows.map((r) => {
+    const evidences = Array.isArray(r.ai_evidences) ? (r.ai_evidences as string[]) : [];
+    return {
+      place_id: r.place_id,
+      name: r.name,
+      address: r.address,
+      category: r.category,
+      kid_score: r.kid_score,
+      display_order: r.display_order,
+      cover_photo_url: coverByPlace.get(r.place_id) ?? null,
+      is_sponsored: sponsoredMap.has(r.place_id),
+      family_highlight: evidences[0] ?? null,
+      lat: r.lat,
+      lng: r.lng,
+    };
+  });
+}
+
+export async function updatePlaceDisplayOrder(placeId: string, order: number): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({ display_order: order, updated_at: new Date() })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function removeFromPublished(placeId: string): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({ curation_status: "pendente", curated_by: null, curated_at: null, display_order: 0, updated_at: new Date() })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function addToPublished(placeId: string, cityId: string, curatedBy: string): Promise<void> {
+  const [maxRow] = await db
+    .select({ max: sql<number>`coalesce(max(${placeKidspotMeta.display_order}), 0)` })
+    .from(placeKidspotMeta)
+    .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
+    .where(
+      and(
+        eq(placeKidspotMeta.curation_status, "aprovado"),
+        eq(placesKidspot.ciudad_id, cityId),
+      ),
+    );
+
+  const nextOrder = (maxRow?.max ?? 0) + 1;
+
+  await db
+    .update(placeKidspotMeta)
+    .set({
+      curation_status: "aprovado",
+      curated_by: curatedBy,
+      curated_at: new Date(),
+      display_order: nextOrder,
+      updated_at: new Date(),
+    })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export type PublishedPlaceAdminRow = CuratedPlaceRow & {
+  curated_at: Date | null;
+  is_sponsored: boolean;
+};
+
+export async function getPublishedPlacesByCityAdmin(cityId: string): Promise<PublishedPlaceAdminRow[]> {
+  const rows = await db
+    .select({
+      place_id: placeKidspotMeta.place_id,
+      name: placeKidspotMeta.name,
+      address: placeKidspotMeta.address,
+      category: placeKidspotMeta.category,
+      kid_score: placeKidspotMeta.kid_score,
+      display_order: placeKidspotMeta.display_order,
+      ai_evidences: placeKidspotMeta.ai_evidences,
+      curated_at: placeKidspotMeta.curated_at,
+      lat: placesKidspot.lat,
+      lng: placesKidspot.lng,
+    })
+    .from(placeKidspotMeta)
+    .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
+    .where(
+      and(
+        eq(placeKidspotMeta.curation_status, "aprovado"),
+        eq(placesKidspot.ciudad_id, cityId),
+      ),
+    )
+    .orderBy(asc(placeKidspotMeta.display_order), asc(placeKidspotMeta.ingested_at));
+
+  if (rows.length === 0) return [];
+
+  const placeIds = rows.map((r) => r.place_id);
+  const [allPhotos, sponsoredMap] = await Promise.all([
+    db
+      .select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover })
+      .from(placePhotos)
+      .where(
+        and(
+          inArray(placePhotos.place_id, placeIds),
+          eq(placePhotos.deleted, false),
+        ),
+      )
+      .orderBy(desc(placePhotos.is_cover), asc(placePhotos.order)),
+    getActiveSponsoredPlaceIds(),
+  ]);
+
+  const coverByPlace = new Map<string, string>();
+  for (const p of allPhotos) {
+    if (!coverByPlace.has(p.place_id)) coverByPlace.set(p.place_id, p.url);
+  }
+
+  return rows.map((r) => {
+    const evidences = Array.isArray(r.ai_evidences) ? (r.ai_evidences as string[]) : [];
+    return {
+      place_id: r.place_id,
+      name: r.name,
+      address: r.address,
+      category: r.category,
+      kid_score: r.kid_score,
+      display_order: r.display_order,
+      cover_photo_url: coverByPlace.get(r.place_id) ?? null,
+      is_sponsored: sponsoredMap.has(r.place_id),
+      family_highlight: evidences[0] ?? null,
+      lat: r.lat,
+      lng: r.lng,
+      curated_at: r.curated_at,
+    };
+  });
+}
+
+export async function searchPlacesForPublishing(cityId: string, q: string): Promise<{ place_id: string; name: string | null; address: string | null; category: string | null; kid_score: number | null }[]> {
+  return db
+    .select({
+      place_id: placeKidspotMeta.place_id,
+      name: placeKidspotMeta.name,
+      address: placeKidspotMeta.address,
+      category: placeKidspotMeta.category,
+      kid_score: placeKidspotMeta.kid_score,
+    })
+    .from(placeKidspotMeta)
+    .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
+    .where(
+      and(
+        eq(placesKidspot.ciudad_id, cityId),
+        sql`${placeKidspotMeta.curation_status} != 'aprovado'`,
+        q.trim()
+          ? or(
+              ilike(placeKidspotMeta.name, `%${q.trim()}%`),
+              ilike(placeKidspotMeta.address, `%${q.trim()}%`),
+            )
+          : undefined,
+      ),
+    )
+    .orderBy(desc(placeKidspotMeta.kid_score))
+    .limit(20);
 }

@@ -616,6 +616,64 @@ export async function autocompletePlaces(
   }));
 }
 
+export type EstablishmentSuggestion = {
+  place_id: string;
+  description: string;
+  main_text: string;
+  secondary_text: string;
+};
+
+/**
+ * autocompleteEstablishments
+ *
+ * Calls the Google Places Autocomplete API restricted to establishments
+ * (not cities). Used by the backoffice to search for places to add.
+ */
+export async function autocompleteEstablishments(
+  input: string,
+  lat?: number,
+  lng?: number,
+): Promise<EstablishmentSuggestion[]> {
+  if (!GOOGLE_PLACES_API_KEY || input.trim().length === 0) return [];
+
+  const qs = new URLSearchParams({
+    input: input.trim(),
+    key: GOOGLE_PLACES_API_KEY,
+    language: "pt-BR",
+    components: "country:br",
+    types: "establishment",
+  });
+
+  if (lat !== undefined && lng !== undefined) {
+    qs.set("location", `${lat},${lng}`);
+    qs.set("radius", "50000");
+  }
+
+  let res: globalThis.Response;
+  try {
+    res = await fetchWithTimeout(`${PLACES_BASE}/autocomplete/json?${qs.toString()}`, "autocompleteEstablishments");
+  } catch { return []; }
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as {
+    predictions: Array<{
+      place_id: string;
+      description: string;
+      structured_formatting: { main_text: string; secondary_text?: string };
+    }>;
+    status: string;
+  };
+
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return [];
+
+  return (data.predictions ?? []).slice(0, 8).map((p) => ({
+    place_id: p.place_id,
+    description: p.description,
+    main_text: p.structured_formatting?.main_text ?? p.description,
+    secondary_text: p.structured_formatting?.secondary_text ?? "",
+  }));
+}
+
 export type GeocodeResult = {
   lat: number;
   lng: number;

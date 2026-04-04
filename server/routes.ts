@@ -2,7 +2,7 @@ import type { Express, Response, NextFunction } from "express";
 import { createServer, type Server } from "node:http";
 import { z } from "zod";
 import { pool, db } from "./db";
-import { searchPlaces, getPlaceDetails, autocompletePlaces, geocodePlace, geocodeCityPlace } from "./google-places";
+import { searchPlaces, getPlaceDetails, autocompletePlaces, autocompleteEstablishments, geocodePlace, geocodeCityPlace } from "./google-places";
 import { sendInviteEmail } from "./email";
 import { runPipelineForCity, runPipelineForAllCities, previewPipelineForCity, aiSearchForCity, applyCriteriaToPlaces } from "./pipeline";
 import { encryptApiKey, decryptApiKey, maskApiKey } from "./ai-crypto";
@@ -12,6 +12,7 @@ import {
   toggleFavorite,
   getFavoritesForUser,
   createUser,
+  adminCreateUser,
   findUserByEmail,
   verifyPassword,
   findOrCreateGoogleUser,
@@ -84,6 +85,14 @@ import {
   incrementImpressions,
   incrementDetailAccess,
   getSponsorshipPerformance,
+  checkCityByCoords,
+  getPublishedPlacesByCity,
+  getPublishedPlacesByCityAdmin,
+  updatePlaceDisplayOrder,
+  removeFromPublished,
+  addToPublished,
+  searchPlacesForPublishing,
+  upsertPlaceWithCity,
 } from "./storage";
 import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting, pipelineBlacklist } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
@@ -777,6 +786,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ users: safe });
     } catch (err) {
       console.error("List users error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  const createUserSchema = z.object({
+    name: z.string().min(2, "Nome deve ter ao menos 2 caracteres"),
+    email: z.string().email("E-mail inválido"),
+    password: z.string().min(6, "Senha deve ter ao menos 6 caracteres"),
+    role: z.enum(["admin", "colaborador", "parceiro", "estabelecimento", "usuario"]),
+  });
+
+  app.post("/api/admin/users", requireAuth, async (req: AuthRequest, res: Response) => {
+    const caller = await getUserById(req.user!.userId);
+    if (!caller || caller.role !== "admin") {
+      res.status(403).json({ error: "Acesso negado: apenas administradores podem criar usuários" });
+      return;
+    }
+
+    const parsed = createUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
+
+    const { name, email, password, role } = parsed.data;
+
+    try {
+      const existing = await findUserByEmail(email);
+      if (existing) {
+        res.status(409).json({ error: "Já existe um usuário com este e-mail" });
+        return;
+      }
+
+      const user = await adminCreateUser({ name, email, password, role: role as UserRole });
+      res.status(201).json({
+        user: { id: user.id, name: user.name, email: user.email, role: user.role, created_at: user.created_at },
+      });
+    } catch (err) {
+      console.error("Admin create user error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -3298,6 +3346,239 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: (err as Error).message });
     }
   });
+
+  /* ------------------------------------------------------------------ */
+  /* Public — City check & curated places (Feature #23)                 */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/cities/check", async (req: AuthRequest, res: Response) => {
+    const lat = parseFloat(req.query.lat as string);
+    const lng = parseFloat(req.query.lng as string);
+    if (isNaN(lat) || isNaN(lng)) {
+      res.status(400).json({ error: "lat e lng são obrigatórios" });
+      return;
+    }
+    try {
+      const result = await checkCityByCoords(lat, lng);
+      if (!result) {
+        res.json({ enabled: false, city_id: null, city_name: null });
+        return;
+      }
+      res.json({
+        enabled: result.enabled,
+        city_id: result.city.id,
+        city_name: result.city.nome,
+        distance_km: Math.round(result.distance_km * 10) / 10,
+      });
+    } catch (err) {
+      console.error("City check error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/api/cities/:cityId/places", async (req: AuthRequest, res: Response) => {
+    const cityId = req.params.cityId as string;
+    try {
+      const places = await getPublishedPlacesByCity(cityId);
+      res.json({ places });
+    } catch (err) {
+      console.error("Curated places error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Published places management (Feature #23)                   */
+  /* ------------------------------------------------------------------ */
+
+  app.get(
+    "/api/admin/published/places",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const cityId = req.query.city_id as string;
+      if (!cityId) {
+        res.status(400).json({ error: "city_id é obrigatório" });
+        return;
+      }
+      try {
+        const places = await getPublishedPlacesByCityAdmin(cityId);
+        res.json({ places });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.get(
+    "/api/admin/published/search-places",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const cityId = req.query.city_id as string;
+      const q = (req.query.q as string) ?? "";
+      if (!cityId) {
+        res.status(400).json({ error: "city_id é obrigatório" });
+        return;
+      }
+      try {
+        const places = await searchPlacesForPublishing(cityId, q);
+        res.json({ places });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/published/:placeId/order",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+      const parsed = z.object({ order: z.number().int().min(0) }).safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        await updatePlaceDisplayOrder(placeId, parsed.data.order);
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/published/:placeId",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+      try {
+        await removeFromPublished(placeId);
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/published",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = z.object({
+        place_id: z.string().min(1),
+        city_id: z.string().min(1),
+      }).safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        await addToPublished(parsed.data.place_id, parsed.data.city_id, req.user!.userId);
+        res.status(201).json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Admin — Google Places integration for backoffice                    */
+  /* ------------------------------------------------------------------ */
+
+  app.get(
+    "/api/admin/google-places/autocomplete",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const input = req.query.input as string;
+      const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+      const lng = req.query.lng ? parseFloat(req.query.lng as string) : undefined;
+      if (!input || input.trim().length === 0) {
+        res.json({ suggestions: [] });
+        return;
+      }
+      try {
+        const suggestions = await autocompleteEstablishments(input.trim(), lat, lng);
+        res.json({ suggestions });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.get(
+    "/api/admin/google-places/details/:placeId",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+      if (!placeId) {
+        res.status(400).json({ error: "placeId is required" });
+        return;
+      }
+      try {
+        const details = await getPlaceDetails(placeId);
+        res.json({ place: details });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const ingestAndPublishSchema = z.object({
+    place_id: z.string().min(1),
+    name: z.string().min(1),
+    address: z.string().optional().default(""),
+    category: z.string().optional().default(""),
+    city: z.string().min(1),
+    ciudad_id: z.string().min(1),
+    lat: z.number().default(0),
+    lng: z.number().default(0),
+    photo_reference: z.string().optional(),
+  });
+
+  app.post(
+    "/api/admin/google-places/ingest-and-publish",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = ingestAndPublishSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const { place_id, name, address, category, city, ciudad_id, lat, lng, photo_reference } = parsed.data;
+      const userId = req.user!.userId;
+
+      try {
+        // Upsert place with proper ciudad_id for the publish join to work
+        await upsertPlaceWithCity({ place_id, city, ciudad_id, lat, lng });
+
+        // Upsert meta (creates as pendente initially, approved below)
+        await upsertPlaceMeta({ place_id, name, address, category, city });
+
+        // Add cover photo if provided
+        if (photo_reference) {
+          const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+          await addPlacePhoto({ place_id, url: photoUrl, photo_reference, order: 0 });
+        }
+
+        // Approve and add to published list (sets display_order, curation_status=aprovado)
+        await addToPublished(place_id, ciudad_id, userId);
+
+        res.status(201).json({ ok: true });
+      } catch (err) {
+        console.error("Ingest and publish error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
 
   const httpServer = createServer(app);
   return httpServer;

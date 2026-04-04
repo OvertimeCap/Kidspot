@@ -317,6 +317,7 @@ export const placeKidspotMeta = pgTable("place_kidspot_meta", {
   custom_criteria: jsonb("custom_criteria"),
   curated_by: varchar("curated_by"),
   curated_at: timestamp("curated_at"),
+  display_order: integer("display_order").default(0),
   ingested_at: timestamp("ingested_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -274,3 +274,46 @@ export async function fetchStoryPhotos(storyId: string): Promise<StoryPhotoRef[]
 export async function createStory(photos: string[]): Promise<void> {
   await apiRequest("POST", "/api/stories", { photos });
 }
+
+/* ------------------------------------------------------------------ */
+/* City-based curated places (Feature #23)                             */
+/* ------------------------------------------------------------------ */
+
+export type CityCheckResult = {
+  enabled: boolean;
+  city_id: string | null;
+  city_name: string | null;
+  distance_km?: number;
+};
+
+export type CuratedPlace = {
+  place_id: string;
+  name: string | null;
+  address: string | null;
+  category: string | null;
+  kid_score: number | null;
+  display_order: number | null;
+  cover_photo_url: string | null;
+  is_sponsored: boolean;
+  family_highlight: string | null;
+  lat: string;
+  lng: string;
+};
+
+export async function checkCity(lat: number, lng: number): Promise<CityCheckResult> {
+  const res = await apiRequest("GET", `/api/cities/check?lat=${lat}&lng=${lng}`);
+  return res.json();
+}
+
+export async function getCuratedPlaces(cityId: string): Promise<CuratedPlace[]> {
+  const res = await apiRequest("GET", `/api/cities/${encodeURIComponent(cityId)}/places`);
+  const data = await res.json();
+  return data.places ?? [];
+}
+
+export async function requestCityActivation(lat: number, lng: number, cityName: string | null): Promise<void> {
+  const content = cityName
+    ? `Solicitação de habilitação de cidade: ${cityName} (lat: ${lat.toFixed(5)}, lng: ${lng.toFixed(5)})`
+    : `Solicitação de habilitação de cidade (lat: ${lat.toFixed(5)}, lng: ${lng.toFixed(5)})`;
+  await apiRequest("POST", "/api/feedback", { type: "sugestao", content });
+}
