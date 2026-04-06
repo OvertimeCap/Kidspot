@@ -95,6 +95,7 @@ import {
   updatePlaceDisplayOrder,
   removeFromPublished,
   addToPublished,
+  bulkPublishWithOrder,
   searchPlacesForPublishing,
   upsertPlaceWithCity,
   updatePlaceType,
@@ -2504,6 +2505,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const schema = z.object({
         city_id: z.string(),
         limit: z.number().int().min(1).max(200).optional().default(50),
+        provider: z.string().optional(),
+        model: z.string().optional(),
+        prompt: z.string().optional(),
       });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) {
@@ -2511,7 +2515,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
       try {
-        const result = await aiSearchForCity(parsed.data.city_id, parsed.data.limit);
+        const result = await aiSearchForCity(parsed.data.city_id, parsed.data.limit, {
+          provider: parsed.data.provider,
+          model: parsed.data.model,
+          prompt: parsed.data.prompt,
+        });
         res.json({ city_name: result.city_name, places: result.places, total: result.places.length });
       } catch (err) {
         console.error("Pipeline ai-search error:", err);
@@ -3645,6 +3653,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         await addToPublished(parsed.data.place_id, parsed.data.city_id, req.user!.userId);
         res.status(201).json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/curation/bulk-publish",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = z.object({
+        city_id: z.string().min(1),
+        places: z.array(z.object({
+          place_id: z.string().min(1),
+          display_order: z.number().int().min(1),
+        })).min(1),
+      }).safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        await bulkPublishWithOrder(parsed.data.city_id, parsed.data.places, req.user!.userId);
+        res.json({ ok: true, count: parsed.data.places.length });
       } catch (err) {
         res.status(500).json({ error: (err as Error).message });
       }

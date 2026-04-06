@@ -234,13 +234,17 @@ export type CriteriaPlace = PreviewPlace & {
 export async function aiSearchForCity(
   cityId: string,
   limit = 50,
+  options: { provider?: string; model?: string; prompt?: string } = {},
 ): Promise<{ city_name: string; places: MinimalPlace[] }> {
   const city = await db.query.cities.findFirst({
     where: and(eq(cities.id, cityId), eq(cities.ativa, true)),
   });
   if (!city) throw new Error("Cidade não encontrada ou não está ativa");
 
-  const rawPlaces = await searchPlacesByText(city.nome);
+  const searchQuery = options.prompt
+    ? `${city.nome} ${options.prompt}`
+    : city.nome;
+  const rawPlaces = await searchPlacesByText(searchQuery);
   const limited = rawPlaces.slice(0, limit);
 
   await db.update(cities).set({ ultima_varredura: new Date() }).where(eq(cities.id, cityId));

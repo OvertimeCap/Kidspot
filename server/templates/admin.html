@@ -806,6 +806,9 @@
         .content { padding: 16px; }
         .modules-grid { grid-template-columns: 1fr 1fr; }
       }
+      .drag-over { outline: 2px dashed var(--primary); background: var(--bg); }
+      .drag-handle { cursor: grab; color: var(--text-muted); font-size: 18px; padding: 0 6px; user-select: none; }
+      .pub-position-label:hover { color: var(--primary); text-decoration: underline; }
     </style>
   </head>
   <body>
@@ -2781,7 +2784,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             const activeCities = cities.filter(c => c.ativa);
             if (activeCities.length === 0) { alert('Nenhuma cidade ativa.'); return; }
             if (!confirm(`Executar pipeline de preview para ${activeCities.length} cidade(s) ativa(s)?`)) return;
-            await runPipelineBatch(activeCities, btnAll);
+            await openAiSearchPanel(activeCities, btnAll);
           });
         }
 
@@ -2792,7 +2795,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             pageContent.querySelectorAll('.cidade-check:checked').forEach(chk => checkedIds.add(chk.dataset.id));
             const selectedCities = cities.filter(c => checkedIds.has(c.id));
             if (selectedCities.length === 0) return;
-            await runPipelineBatch(selectedCities, btnSelected);
+            await openAiSearchPanel(selectedCities, btnSelected);
           });
         }
 
@@ -2807,7 +2810,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             const cityName = btn.dataset.name;
             const city = cities.find(c => c.id === cityId);
             if (city && !city.ativa) { alert('Cidade inativa. Ative antes de executar o pipeline.'); return; }
-            await runPipelineBatch([city || { id: cityId, nome: cityName }], btn);
+            await openAiSearchPanel([city || { id: cityId, nome: cityName }], btn);
           });
         });
 
@@ -2940,8 +2943,96 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         return types[0] || 'Local';
       }
 
+      // Open AI search config panel before running pipeline
+      async function openAiSearchPanel(cityList, triggerBtn) {
+        openModal('🔍 Configurar Busca com IA',
+          '<div style="text-align:center;padding:20px"><div class="spinner"></div><p style="margin-top:12px;color:var(--text-muted);font-size:13px">Carregando configurações…</p></div>',
+          '', true);
+
+        let configuredProviders = [];
+        let activePromptText = '';
+
+        try {
+          const [provRes, promptRes] = await Promise.all([
+            apiFetch('/admin/ai-providers'),
+            apiFetch('/admin/ai-prompts/active'),
+          ]);
+          const provData = await provRes.json();
+          const promptData = await promptRes.json();
+          configuredProviders = (provData.providers || []).filter(p => p.configured);
+          activePromptText = promptData.prompt?.prompt || '';
+        } catch (e) {
+          openModal('🔍 Configurar Busca com IA',
+            `<div style="color:#dc2626;font-size:13px">Erro ao carregar configurações: ${escHtml(e.message)}</div>`,
+            '<button class="btn btn-gray" onclick="closeModal()">Fechar</button>', true);
+          return;
+        }
+
+        if (configuredProviders.length === 0) {
+          openModal('🔍 Configurar Busca com IA',
+            `<div style="padding:12px;background:#fef3c7;border-radius:8px;font-size:13px;color:#92400e">
+              <strong>⚠️ Nenhum provedor de IA configurado.</strong><br>
+              Configure ao menos um provedor na página <a href="#" onclick="navigateTo('ai-hub');closeModal()" style="color:#2563eb">Hub de IA</a> antes de usar este recurso.
+            </div>`,
+            '<button class="btn btn-gray" onclick="closeModal()">Fechar</button>', true);
+          return;
+        }
+
+        const firstProvider = configuredProviders[0];
+
+        function renderModelOptions(provider) {
+          return (provider.available_models || []).map(m =>
+            `<option value="${escHtml(m)}">${escHtml(m)}</option>`).join('');
+        }
+
+        const bodyHtml = `
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div>
+              <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Provedor de IA</label>
+              <select id="ai-panel-provider" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px">
+                ${configuredProviders.map(p =>
+                  `<option value="${escHtml(p.provider)}" data-models='${JSON.stringify(p.available_models || [])}'>${escHtml(p.label)}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Modelo</label>
+              <select id="ai-panel-model" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px">
+                ${renderModelOptions(firstProvider)}
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Prompt de busca</label>
+              <textarea id="ai-panel-prompt" rows="4" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box">${escHtml(activePromptText)}</textarea>
+              <p style="margin:4px 0 0;font-size:11px;color:var(--text-muted)">Deixe vazio para buscar apenas pelo nome da cidade.</p>
+            </div>
+          </div>`;
+
+        const footerHtml = `
+          <button class="btn btn-gray" onclick="closeModal()">Cancelar</button>
+          <button class="btn" id="ai-panel-run" style="background:var(--primary);color:#fff">🔍 Executar Busca</button>`;
+
+        openModal('🔍 Configurar Busca com IA', bodyHtml, footerHtml, true);
+
+        // Update models when provider changes
+        document.getElementById('ai-panel-provider').addEventListener('change', function() {
+          const selected = this.options[this.selectedIndex];
+          const models = JSON.parse(selected.dataset.models || '[]');
+          const modelSel = document.getElementById('ai-panel-model');
+          modelSel.innerHTML = models.map(m => `<option value="${escHtml(m)}">${escHtml(m)}</option>`).join('');
+        });
+
+        document.getElementById('ai-panel-run').addEventListener('click', async () => {
+          const provider = document.getElementById('ai-panel-provider').value;
+          const model = document.getElementById('ai-panel-model').value;
+          const prompt = document.getElementById('ai-panel-prompt').value.trim();
+          closeModal();
+          await runPipelineBatch(cityList, triggerBtn, { provider, model, prompt: prompt || undefined });
+        });
+      }
+
       // Step 1: call ai-search and show raw results
-      async function runPipelineBatch(cityList, triggerBtn) {
+      async function runPipelineBatch(cityList, triggerBtn, options = {}) {
         const origText = triggerBtn.textContent;
         triggerBtn.disabled = true;
         triggerBtn.textContent = '⏳ Buscando com IA…';
@@ -2957,7 +3048,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             const res = await apiFetch('/admin/pipeline/ai-search', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ city_id: city.id, limit: cidadesPipelineLimit }),
+              body: JSON.stringify({ city_id: city.id, limit: cidadesPipelineLimit, ...options }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Erro');
@@ -3774,6 +3865,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
       let publishedCityName    = '';
       let activeCuraCities     = [];          // cache das cidades ativas para o dropdown
       let selectedCurationIds  = new Set();   // IDs selecionados para ação em massa
+      let filaApprovedOrder    = [];           // {place_id, ciudad_id} em ordem para aprovados
 
       async function renderCuradoria() {
         activeCuraCities = [];
@@ -3963,6 +4055,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                 <button class="btn btn-red btn-sm"   id="bulk-to-rejected-btn"  style="display:none">✕ Mover para Rejeitados (0)</button>
                 <button class="btn btn-sm"            id="bulk-type-comer-btn"   style="display:none;background:#fde68a;color:#854d0e">🍽 Mudar para Comer (0)</button>
                 <button class="btn btn-sm"            id="bulk-type-parques-btn" style="display:none;background:#bbf7d0;color:#166534">🌳 Mudar para Parques (0)</button>
+                <button class="btn btn-sm" id="publicar-fila-btn" style="background:#FF6B35;color:#fff;margin-left:auto">📤 Publicar em ordem</button>
               ` : ''}
               ${curationStatusFilter === 'rejeitado' ? `
                 <button class="btn btn-gray btn-sm"  id="bulk-to-pending-btn"   style="display:none">↩ Voltar para Fila (0)</button>
@@ -4053,6 +4146,37 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           if (!ids.length) return;
           if (!confirm(`Mudar ${ids.length} lugar(es) para tipo Parques?`)) return;
           await executeBulkChangeType('parques', ids);
+        });
+
+        document.getElementById('publicar-fila-btn')?.addEventListener('click', async () => {
+          if (!filaApprovedOrder.length) {
+            alert('Não há lugares aprovados para publicar.'); return;
+          }
+          const cityId = filaApprovedOrder[0]?.ciudad_id;
+          const cityObj = activeCuraCities.find(c => c.id === cityId) ||
+                          activeCuraCities.find(c => c.nome === curationCityFilter);
+          if (!cityObj) {
+            alert('Selecione uma cidade no filtro antes de publicar.'); return;
+          }
+          if (!confirm(`Publicar ${filaApprovedOrder.length} lugar(es) na cidade "${cityObj.nome}" nesta ordem?`)) return;
+          const btn = document.getElementById('publicar-fila-btn');
+          btn.disabled = true; btn.textContent = 'Publicando…';
+          try {
+            const places = filaApprovedOrder.map((item, idx) => ({ place_id: item.place_id, display_order: idx + 1 }));
+            const res = await apiFetch('/admin/curation/bulk-publish', {
+              method: 'POST', body: JSON.stringify({ city_id: cityObj.id, places }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Erro');
+            alert(`${data.count} lugar(es) publicados com sucesso!`);
+            curationMainTab = 'publicados';
+            publishedCityId = cityObj.id;
+            publishedCityName = cityObj.nome;
+            renderCurationMainContent();
+          } catch(e) {
+            alert('Erro: ' + e.message);
+            btn.disabled = false; btn.textContent = '📤 Publicar em ordem';
+          }
         });
 
         container.querySelectorAll('.tab-btn[data-cstatus]').forEach(btn => {
@@ -4199,10 +4323,13 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           const score      = item.kid_score ?? null;
           const scoreColor = score === null ? '#9ca3af' : score >= 70 ? '#059669' : score >= 40 ? '#D97706' : '#DC2626';
           return `
-            <div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;padding:14px 16px" data-place-id="${escHtml(item.place_id)}">
+            <div class="card pub-card" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;padding:14px 16px" data-place-id="${escHtml(item.place_id)}"${!isAnalista ? ' draggable="true"' : ''}>
               <!-- Position controls -->
-              <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
-                <span style="font-size:11px;color:var(--text-muted);text-align:center;font-weight:600">#${idx + 1}</span>
+              <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;align-items:center">
+                ${!isAnalista ? `<span class="drag-handle" title="Arrastar para reordenar">⠿</span>` : ''}
+                <span class="pub-position-label" data-idx="${idx}" data-place-id="${escHtml(item.place_id)}"
+                  style="font-size:11px;color:var(--text-muted);text-align:center;font-weight:600;${!isAnalista ? 'cursor:pointer;min-width:28px;display:block' : ''}"
+                  ${!isAnalista ? 'title="Clique para mudar posição"' : ''}>#${idx + 1}</span>
                 ${!isAnalista ? `
                   <button class="btn btn-sm" style="padding:3px 8px;font-size:12px" data-up="${escHtml(item.place_id)}" data-idx="${idx}" ${idx === 0 ? 'disabled' : ''} title="Subir">▲</button>
                   <button class="btn btn-sm" style="padding:3px 8px;font-size:12px" data-down="${escHtml(item.place_id)}" data-idx="${idx}" ${idx === places.length - 1 ? 'disabled' : ''} title="Descer">▼</button>
@@ -4282,6 +4409,84 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
               if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
               loadPublishedList();
             } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        if (!isAnalista) {
+          attachPublishedDragDrop(listEl, places);
+
+          // Click-to-edit position labels
+          listEl.querySelectorAll('.pub-position-label').forEach(label => {
+            label.addEventListener('click', () => {
+              const currentIdx = parseInt(label.dataset.idx);
+              const total = places.length;
+              const input = document.createElement('input');
+              input.type = 'number'; input.min = 1; input.max = total; input.value = currentIdx + 1;
+              input.style.cssText = 'width:42px;font-size:11px;text-align:center;border:1px solid var(--primary);border-radius:4px;padding:1px 2px';
+              label.replaceWith(input);
+              input.select();
+              const commit = async () => {
+                const newPos = parseInt(input.value);
+                if (!newPos || newPos < 1 || newPos > total || newPos === currentIdx + 1) { input.replaceWith(label); return; }
+                const newIdx = newPos - 1;
+                const [moved] = places.splice(currentIdx, 1);
+                places.splice(newIdx, 0, moved);
+                input.replaceWith(label);
+                const cards = [...listEl.querySelectorAll('.pub-card')];
+                const movedCard = cards[currentIdx];
+                const refCard = cards[newIdx];
+                if (currentIdx < newIdx) listEl.insertBefore(movedCard, refCard.nextSibling);
+                else listEl.insertBefore(movedCard, refCard);
+                listEl.querySelectorAll('.pub-position-label').forEach((lbl, i) => { lbl.textContent = `#${i+1}`; lbl.dataset.idx = i; });
+                try {
+                  await Promise.all(places.map((p, i) =>
+                    apiFetch(`/admin/published/${encodeURIComponent(p.place_id)}/order`, { method: 'PATCH', body: JSON.stringify({ order: i + 1 }) })
+                  ));
+                } catch(e) { alert('Erro: ' + e.message); loadPublishedList(); }
+              };
+              input.addEventListener('blur', commit);
+              input.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+                if (e.key === 'Escape') input.replaceWith(label);
+              });
+              input.focus();
+            });
+          });
+        }
+      }
+
+      function attachPublishedDragDrop(listEl, places) {
+        let dragSrc = null;
+        listEl.querySelectorAll('.pub-card').forEach(card => {
+          card.addEventListener('dragstart', e => {
+            dragSrc = card; card.style.opacity = '0.4';
+            e.dataTransfer.effectAllowed = 'move';
+          });
+          card.addEventListener('dragend', () => {
+            card.style.opacity = '';
+            listEl.querySelectorAll('.pub-card').forEach(c => c.classList.remove('drag-over'));
+          });
+          card.addEventListener('dragover', e => {
+            e.preventDefault();
+            listEl.querySelectorAll('.pub-card').forEach(c => c.classList.remove('drag-over'));
+            card.classList.add('drag-over');
+          });
+          card.addEventListener('drop', async e => {
+            e.preventDefault();
+            if (dragSrc === card) return;
+            card.classList.remove('drag-over');
+            const srcIdx = places.findIndex(p => p.place_id === dragSrc.dataset.placeId);
+            const dstIdx = places.findIndex(p => p.place_id === card.dataset.placeId);
+            const [moved] = places.splice(srcIdx, 1);
+            places.splice(dstIdx, 0, moved);
+            if (srcIdx < dstIdx) card.parentNode.insertBefore(dragSrc, card.nextSibling);
+            else card.parentNode.insertBefore(dragSrc, card);
+            listEl.querySelectorAll('.pub-position-label').forEach((lbl, i) => { lbl.textContent = `#${i+1}`; lbl.dataset.idx = i; });
+            try {
+              await Promise.all(places.map((p, i) =>
+                apiFetch(`/admin/published/${encodeURIComponent(p.place_id)}/order`, { method: 'PATCH', body: JSON.stringify({ order: i + 1 }) })
+              ));
+            } catch(e) { alert('Erro ao salvar ordem: ' + e.message); loadPublishedList(); }
           });
         });
       }
@@ -4523,9 +4728,10 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           const coverPhoto = photos.find(p => p.is_cover) || photos[0] || null;
 
           return `
-            <div class="card" style="margin-bottom:16px" data-place-id="${escHtml(item.place_id)}">
+            <div class="card cura-card" style="margin-bottom:16px" data-place-id="${escHtml(item.place_id)}"${curationStatusFilter === 'aprovado' && !isAnalista ? ' draggable="true"' : ''}>
               ${!isAnalista ? `
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                  ${curationStatusFilter === 'aprovado' ? '<span class="drag-handle" title="Arrastar para reordenar">⠿</span>' : ''}
                   <input type="checkbox" class="curation-item-check"
                     data-id="${escHtml(item.place_id)}"
                     style="width:16px;height:16px;flex-shrink:0;cursor:pointer"
@@ -4640,7 +4846,6 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           btn.addEventListener('click', async () => {
             const id   = btn.dataset.id;
             const name = btn.dataset.name;
-            if (!confirm(`Aprovar "${name}"?`)) return;
             btn.disabled = true;
             try {
               const res = await apiFetch(`/admin/curation/${id}/approve`, { method: 'POST', body: JSON.stringify({}) });
@@ -4656,7 +4861,6 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           btn.addEventListener('click', async () => {
             const id   = btn.dataset.id;
             const name = btn.dataset.name;
-            if (!confirm(`Rejeitar "${name}"? O lugar não será publicado no app.`)) return;
             btn.disabled = true;
             try {
               const res = await apiFetch(`/admin/curation/${id}/reject`, { method: 'POST', body: JSON.stringify({}) });
@@ -4755,6 +4959,11 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           });
         });
 
+        // Drag-and-drop for aprovados
+        if (curationStatusFilter === 'aprovado' && !isAnalista) {
+          attachFilaDragDrop(listEl, items);
+        }
+
         // Pagination
         if (pagEl) {
           const totalPages = Math.ceil(total / CURATION_LIMIT);
@@ -4775,6 +4984,39 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             });
           }
         }
+      }
+
+      function attachFilaDragDrop(listEl, items) {
+        filaApprovedOrder = items.map(i => ({ place_id: i.place_id, ciudad_id: i.ciudad_id }));
+        let dragSrc = null;
+        listEl.querySelectorAll('.cura-card[draggable="true"]').forEach(card => {
+          card.addEventListener('dragstart', e => {
+            dragSrc = card; card.style.opacity = '0.4';
+            e.dataTransfer.effectAllowed = 'move';
+          });
+          card.addEventListener('dragend', () => {
+            card.style.opacity = '';
+            listEl.querySelectorAll('.cura-card').forEach(c => c.classList.remove('drag-over'));
+          });
+          card.addEventListener('dragover', e => {
+            e.preventDefault();
+            listEl.querySelectorAll('.cura-card').forEach(c => c.classList.remove('drag-over'));
+            card.classList.add('drag-over');
+          });
+          card.addEventListener('drop', e => {
+            e.preventDefault();
+            if (dragSrc === card) return;
+            card.classList.remove('drag-over');
+            const srcId = dragSrc.dataset.placeId;
+            const dstId = card.dataset.placeId;
+            const srcIdx = filaApprovedOrder.findIndex(p => p.place_id === srcId);
+            const dstIdx = filaApprovedOrder.findIndex(p => p.place_id === dstId);
+            const [moved] = filaApprovedOrder.splice(srcIdx, 1);
+            filaApprovedOrder.splice(dstIdx, 0, moved);
+            if (srcIdx < dstIdx) card.parentNode.insertBefore(dragSrc, card.nextSibling);
+            else card.parentNode.insertBefore(dragSrc, card);
+          });
+        });
       }
 
       function openCurationEditModal(placeId, placeName, desc, placeType) {

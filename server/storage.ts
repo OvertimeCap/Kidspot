@@ -1090,6 +1090,7 @@ export type CurationItem = {
   updated_at: Date;
   curated_at: Date | null;
   city: string;
+  ciudad_id: string | null;
   place_type: "comer" | "parques" | null;
   photos: PlacePhoto[];
 };
@@ -1132,6 +1133,7 @@ export async function listCurationQueue(opts: {
         curated_at: placeKidspotMeta.curated_at,
         place_type: placeKidspotMeta.place_type,
         city: placesKidspot.city,
+        ciudad_id: placesKidspot.ciudad_id,
       })
       .from(placeKidspotMeta)
       .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
@@ -1752,6 +1754,27 @@ export async function addToPublished(placeId: string, cityId: string, curatedBy:
       updated_at: new Date(),
     })
     .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function bulkPublishWithOrder(
+  cityId: string,
+  places: { place_id: string; display_order: number }[],
+  curatedBy: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    for (const { place_id, display_order } of places) {
+      await tx
+        .update(placeKidspotMeta)
+        .set({
+          curation_status: "aprovado",
+          curated_by: curatedBy,
+          curated_at: new Date(),
+          display_order,
+          updated_at: new Date(),
+        })
+        .where(eq(placeKidspotMeta.place_id, place_id));
+    }
+  });
 }
 
 export type PublishedPlaceAdminRow = CuratedPlaceRow & {
