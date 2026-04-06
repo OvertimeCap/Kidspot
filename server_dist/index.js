@@ -1107,12 +1107,12 @@ async function upsertPlaceMeta(data) {
   }).onConflictDoUpdate({
     target: placeKidspotMeta.place_id,
     set: {
-      name: data.name ?? null,
-      address: data.address ?? null,
-      category: data.category ?? null,
-      kid_score: data.kid_score ?? null,
-      ai_evidences: data.ai_evidences ?? null,
-      description: data.description ?? null,
+      ...data.name !== void 0 && { name: data.name },
+      ...data.address !== void 0 && { address: data.address },
+      ...data.category !== void 0 && { category: data.category },
+      ...data.kid_score !== void 0 && { kid_score: data.kid_score },
+      ...data.ai_evidences !== void 0 && { ai_evidences: data.ai_evidences },
+      ...data.description !== void 0 && { description: data.description },
       updated_at: /* @__PURE__ */ new Date()
     }
   });
@@ -1155,6 +1155,14 @@ async function rejectCurationItem(placeId, curatedBy) {
     curation_status: "rejeitado",
     curated_by: curatedBy,
     curated_at: /* @__PURE__ */ new Date(),
+    updated_at: /* @__PURE__ */ new Date()
+  }).where(eq(placeKidspotMeta.place_id, placeId));
+}
+async function resetCurationItem(placeId) {
+  await db.update(placeKidspotMeta).set({
+    curation_status: "pendente",
+    curated_by: null,
+    curated_at: null,
     updated_at: /* @__PURE__ */ new Date()
   }).where(eq(placeKidspotMeta.place_id, placeId));
 }
@@ -1305,6 +1313,9 @@ async function getActiveSponsoredPlaceIds() {
     }
   }
   return map;
+}
+async function updatePlaceType(placeId, placeType) {
+  await db.update(placeKidspotMeta).set({ place_type: placeType, updated_at: /* @__PURE__ */ new Date() }).where(eq(placeKidspotMeta.place_id, placeId));
 }
 async function incrementImpressions(placeIds) {
   if (placeIds.length === 0)
@@ -2669,7 +2680,7 @@ async function sendInviteEmail(opts) {
 }
 
 // server/pipeline.ts
-import { cities as cities2, pipelineRuns, placesKidspot as placesKidspot2, pipelineBlacklist } from "@shared/schema";
+import { cities as cities2, pipelineRuns, placesKidspot as placesKidspot2, pipelineBlacklist, customCriteria } from "@shared/schema";
 import { eq as eq4, and as and4, inArray as inArray2 } from "drizzle-orm";
 var COST_PER_TEXT_SEARCH = 0.032;
 var TEXT_SEARCH_REQUESTS_PER_CITY = 4;
@@ -2704,7 +2715,16 @@ async function ingestCity(cityId, cityName, lat, lng) {
             lng: String(place.location?.lng ?? 0),
             status: "pendente"
           });
-          await upsertPlaceMeta({ place_id: place.place_id, city: cityName });
+          await upsertPlaceMeta({
+            place_id: place.place_id,
+            city: cityName,
+            name: place.name,
+            address: place.formatted_address
+          });
+          if (place.photos?.[0]?.photo_reference) {
+            const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(place.photos[0].photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+            await addPlacePhoto({ place_id: place.place_id, url: photoUrl, photo_reference: place.photos[0].photo_reference, order: 0 });
+          }
           newPending++;
         }
       } catch {
@@ -2822,29 +2842,25 @@ async function aiSearchForCity(cityId, limit = 50) {
       types: p.types ?? [],
       rating: p.rating,
       user_ratings_total: p.user_ratings_total,
-      location: p.location
+      location: p.location,
+      photos: p.photos
     }))
   };
 }
 async function applyCriteriaToPlaces(cityId, rawPlaces) {
-  const blacklisted = await db.select({ place_id: pipelineBlacklist.place_id }).from(pipelineBlacklist);
+  const [blacklisted, activeCriteriaRows] = await Promise.all([
+    db.select({ place_id: pipelineBlacklist.place_id }).from(pipelineBlacklist),
+    db.select({ key: customCriteria.key, label: customCriteria.label }).from(customCriteria).where(eq4(customCriteria.is_active, true))
+  ]);
   const blacklistSet = new Set(blacklisted.map((b) => b.place_id));
-  const withTypes = rawPlaces.map((p) => ({ ...p, types: p.types ?? [], name: p.name ?? "" }));
-  const filtered = applyKidFilters(withTypes);
-  const filteredSet = new Set(filtered.map((p) => p.place_id));
   const placeIds = rawPlaces.map((p) => p.place_id);
   const existingRows = placeIds.length > 0 ? await db.select({ place_id: placesKidspot2.place_id }).from(placesKidspot2).where(inArray2(placesKidspot2.place_id, placeIds)) : [];
   const existingSet = new Set(existingRows.map((r) => r.place_id));
   return {
     places: rawPlaces.map((p) => {
       const isBlacklisted = blacklistSet.has(p.place_id);
-      const passedFilters = filteredSet.has(p.place_id);
-      const passed = passedFilters && !isBlacklisted;
-      let rejection_reason;
-      if (isBlacklisted)
-        rejection_reason = "Na blacklist";
-      else if (!passedFilters)
-        rejection_reason = "N\xE3o atende crit\xE9rios kid-friendly";
+      const passed = !isBlacklisted;
+      const rejection_reason = isBlacklisted ? "Na blacklist" : void 0;
       return {
         place_id: p.place_id,
         name: p.name,
@@ -2857,7 +2873,8 @@ async function applyCriteriaToPlaces(cityId, rawPlaces) {
         passed_criteria: passed,
         rejection_reason
       };
-    })
+    }),
+    active_criteria: activeCriteriaRows
   };
 }
 async function runPipelineForAllCities() {
@@ -2887,7 +2904,7 @@ async function runPipelineForAllCities() {
 }
 
 // server/routes.ts
-import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, aiPrompts as aiPrompts2, kidscoreRules, customCriteria, pipelineRuns as pipelineRuns2, placesKidspot as placesKidspot3, aiProviders as aiProviders2, pipelineRouting as pipelineRouting2, pipelineBlacklist as pipelineBlacklist2 } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, aiPrompts as aiPrompts2, kidscoreRules, customCriteria as customCriteria2, pipelineRuns as pipelineRuns2, placesKidspot as placesKidspot3, aiProviders as aiProviders2, pipelineRouting as pipelineRouting2, pipelineBlacklist as pipelineBlacklist2, placeKidspotMeta as placeKidspotMeta2, placePhotos as placePhotos2 } from "@shared/schema";
 
 // server/auth.ts
 import jwt from "jsonwebtoken";
@@ -2992,7 +3009,7 @@ function requireAdmin(req, res, next) {
 }
 
 // server/routes.ts
-import { eq as eq5, desc as desc2, and as and5, ilike as ilike2, sql as sqlExpr } from "drizzle-orm";
+import { eq as eq5, desc as desc2, and as and5, ilike as ilike2, sql as sqlExpr, isNull, or as or2 } from "drizzle-orm";
 import crypto2 from "crypto";
 import bcrypt2 from "bcryptjs";
 async function registerRoutes(app2) {
@@ -4229,7 +4246,7 @@ ${combinedReviews}`
       return;
     }
     try {
-      const rows = await db.select().from(customCriteria).orderBy(customCriteria.created_at);
+      const rows = await db.select().from(customCriteria2).orderBy(customCriteria2.created_at);
       res.json({ criteria: rows });
     } catch (err) {
       console.error("List custom criteria error:", err);
@@ -4254,7 +4271,7 @@ ${combinedReviews}`
       return;
     }
     try {
-      const [created] = await db.insert(customCriteria).values({ ...parsed.data, is_active: true }).returning();
+      const [created] = await db.insert(customCriteria2).values({ ...parsed.data, is_active: true }).returning();
       res.status(201).json({ criterion: created });
     } catch (err) {
       const msg = err.message;
@@ -4273,7 +4290,7 @@ ${combinedReviews}`
       return;
     }
     try {
-      const [deleted] = await db.delete(customCriteria).where(eq5(customCriteria.id, req.params.id)).returning();
+      const [deleted] = await db.delete(customCriteria2).where(eq5(customCriteria2.id, req.params.id)).returning();
       if (!deleted) {
         res.status(404).json({ error: "Crit\xE9rio n\xE3o encontrado" });
         return;
@@ -4301,7 +4318,7 @@ ${combinedReviews}`
       return;
     }
     try {
-      const [updated] = await db.update(customCriteria).set(parsed.data).where(eq5(customCriteria.id, req.params.id)).returning();
+      const [updated] = await db.update(customCriteria2).set(parsed.data).where(eq5(customCriteria2.id, req.params.id)).returning();
       if (!updated) {
         res.status(404).json({ error: "Crit\xE9rio n\xE3o encontrado" });
         return;
@@ -4833,7 +4850,9 @@ ${combinedReviews}`
       }
       const parsed = insertCitySchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
+        const flat = parsed.error.flatten();
+        const msg = [...flat.formErrors, ...Object.values(flat.fieldErrors).flat()].join(", ") || "Dados inv\xE1lidos";
+        res.status(400).json({ error: msg });
         return;
       }
       try {
@@ -4861,7 +4880,9 @@ ${combinedReviews}`
       }
       const parsed = updateCitySchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
+        const flat = parsed.error.flatten();
+        const msg = [...flat.formErrors, ...Object.values(flat.fieldErrors).flat()].join(", ") || "Dados inv\xE1lidos";
+        res.status(400).json({ error: msg });
         return;
       }
       const cityId = req.params.id;
@@ -5024,7 +5045,8 @@ ${combinedReviews}`
           formatted_address: z.string().optional().default(""),
           types: z.array(z.string()).optional().default([]),
           lat: z.number(),
-          lng: z.number()
+          lng: z.number(),
+          photo_reference: z.string().optional()
         }))
       });
       const parsed = schema2.safeParse(req.body);
@@ -5047,7 +5069,11 @@ ${combinedReviews}`
               lng: String(place.lng),
               status: "pendente"
             });
-            await upsertPlaceMeta({ place_id: place.place_id, city: parsed.data.city_name });
+            await upsertPlaceMeta({ place_id: place.place_id, city: parsed.data.city_name, name: place.name, address: place.formatted_address });
+            if (place.photo_reference) {
+              const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(place.photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+              await addPlacePhoto({ place_id: place.place_id, url: photoUrl, photo_reference: place.photo_reference, order: 0 });
+            }
             inserted++;
           }
         }
@@ -5117,7 +5143,7 @@ ${combinedReviews}`
         const result = await applyCriteriaToPlaces(parsed.data.city_id, parsed.data.places);
         const passed = result.places.filter((p) => p.passed_criteria).length;
         const rejected = result.places.length - passed;
-        res.json({ places: result.places, passed, rejected });
+        res.json({ places: result.places, passed, rejected, active_criteria: result.active_criteria });
       } catch (err) {
         console.error("Pipeline apply-criteria error:", err);
         res.status(500).json({ error: err.message });
@@ -5502,6 +5528,38 @@ ${combinedReviews}`
     req.caller = caller;
     next();
   }
+  app2.post(
+    "/api/admin/curation/backfill-meta",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req, res) => {
+      try {
+        const missing = await db.select({ place_id: placeKidspotMeta2.place_id }).from(placeKidspotMeta2).where(or2(isNull(placeKidspotMeta2.name), eq5(placeKidspotMeta2.name, "")));
+        let updated = 0;
+        let failed = 0;
+        for (const row of missing) {
+          try {
+            const details = await getPlaceDetails(row.place_id);
+            await upsertPlaceMeta({ place_id: row.place_id, name: details.name, address: details.formatted_address });
+            const existingPhoto = await db.query.placePhotos.findFirst({
+              where: and5(eq5(placePhotos2.place_id, row.place_id), eq5(placePhotos2.deleted, false))
+            });
+            if (!existingPhoto && details.photos?.[0]?.photo_reference) {
+              const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(details.photos[0].photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+              await addPlacePhoto({ place_id: row.place_id, url: photoUrl, photo_reference: details.photos[0].photo_reference, order: 0 });
+            }
+            updated++;
+          } catch {
+            failed++;
+          }
+        }
+        res.json({ total: missing.length, updated, failed });
+      } catch (err) {
+        console.error("Backfill meta error:", err);
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
   app2.get(
     "/api/admin/curation/queue",
     requireAuth,
@@ -5531,9 +5589,37 @@ ${combinedReviews}`
           limit,
           offset
         });
-        res.json(result);
+        const sponsoredMap = await getActiveSponsoredPlaceIds();
+        const augmented = result.items.map((item) => ({
+          ...item,
+          is_sponsored: sponsoredMap.has(item.place_id)
+        }));
+        res.json({ items: augmented, total: result.total });
       } catch (err) {
         console.error("Curation queue error:", err);
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
+  const placeTypeSchema = z.object({
+    place_type: z.enum(["comer", "parques"])
+  });
+  app2.post(
+    "/api/admin/curation/:placeId/place-type",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req, res) => {
+      const placeId = req.params.placeId;
+      const parsed = placeTypeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        await updatePlaceType(placeId, parsed.data.place_type);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Update place type error:", err);
         res.status(500).json({ error: err.message });
       }
     }
@@ -5589,6 +5675,21 @@ ${combinedReviews}`
         res.json({ ok: true });
       } catch (err) {
         console.error("Reject curation error:", err);
+        res.status(500).json({ error: err.message });
+      }
+    }
+  );
+  app2.post(
+    "/api/admin/curation/:placeId/reset",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req, res) => {
+      const placeId = req.params.placeId;
+      try {
+        await resetCurationItem(placeId);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Reset curation error:", err);
         res.status(500).json({ error: err.message });
       }
     }
@@ -6111,7 +6212,7 @@ ${combinedReviews}`
 }
 
 // server/config-defaults.ts
-import { aiPrompts as aiPrompts3, kidscoreRules as kidscoreRules2, customCriteria as customCriteria2, pipelineRouting as pipelineRouting3 } from "@shared/schema";
+import { aiPrompts as aiPrompts3, kidscoreRules as kidscoreRules2, customCriteria as customCriteria3, pipelineRouting as pipelineRouting3 } from "@shared/schema";
 import { count } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
@@ -6203,9 +6304,9 @@ async function seedConfigDefaults() {
       );
       console.log("[seed] kidscore_rules: inserted", DEFAULT_KIDSCORE_RULES.length, "rules");
     }
-    const [criteriaCount] = await db.select({ count: count() }).from(customCriteria2);
+    const [criteriaCount] = await db.select({ count: count() }).from(customCriteria3);
     if ((criteriaCount?.count ?? 0) === 0) {
-      await db.insert(customCriteria2).values(
+      await db.insert(customCriteria3).values(
         DEFAULT_CUSTOM_CRITERIA.map((c) => ({ ...c, is_active: true }))
       );
       console.log("[seed] custom_criteria: inserted", DEFAULT_CUSTOM_CRITERIA.length, "criteria");
@@ -6242,7 +6343,7 @@ function setupCors(app2) {
       res.header("Access-Control-Allow-Origin", origin);
       res.header(
         "Access-Control-Allow-Methods",
-        "GET, POST, PUT, DELETE, OPTIONS"
+        "GET, POST, PUT, PATCH, DELETE, OPTIONS"
       );
       res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
       res.header("Access-Control-Allow-Credentials", "true");

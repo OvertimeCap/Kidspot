@@ -1214,12 +1214,12 @@ export async function upsertPlaceMeta(data: {
     .onConflictDoUpdate({
       target: placeKidspotMeta.place_id,
       set: {
-        name: data.name ?? null,
-        address: data.address ?? null,
-        category: data.category ?? null,
-        kid_score: data.kid_score ?? null,
-        ai_evidences: data.ai_evidences ?? null,
-        description: data.description ?? null,
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.address !== undefined && { address: data.address }),
+        ...(data.category !== undefined && { category: data.category }),
+        ...(data.kid_score !== undefined && { kid_score: data.kid_score }),
+        ...(data.ai_evidences !== undefined && { ai_evidences: data.ai_evidences }),
+        ...(data.description !== undefined && { description: data.description }),
         updated_at: new Date(),
       },
     });
@@ -1280,6 +1280,18 @@ export async function rejectCurationItem(placeId: string, curatedBy: string): Pr
       curation_status: "rejeitado",
       curated_by: curatedBy,
       curated_at: new Date(),
+      updated_at: new Date(),
+    })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function resetCurationItem(placeId: string): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({
+      curation_status: "pendente",
+      curated_by: null,
+      curated_at: null,
       updated_at: new Date(),
     })
     .where(eq(placeKidspotMeta.place_id, placeId));
@@ -1535,6 +1547,16 @@ export async function getActiveSponsoredPlaceIds(): Promise<Map<string, number>>
     }
   }
   return map;
+}
+
+export async function updatePlaceType(
+  placeId: string,
+  placeType: "comer" | "parques",
+): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({ place_type: placeType, updated_at: new Date() })
+    .where(eq(placeKidspotMeta.place_id, placeId));
 }
 
 export async function incrementImpressions(placeIds: string[]): Promise<void> {

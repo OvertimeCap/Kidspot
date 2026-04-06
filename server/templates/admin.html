@@ -2981,7 +2981,10 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             ${renderPipelineStepper(container, 0)}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
               <h3 style="margin:0;font-size:16px">🔍 Resultados da Busca com IA — ${places.length} lugar(es) encontrado(s)</h3>
-              <div style="display:flex;gap:8px">
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-sm" id="step1-bulk-approve" style="background:#16a34a;color:#fff">✅ Pré-aprovar Selecionados</button>
+                <button class="btn btn-sm btn-gray" id="step1-bulk-neutral">⏸️ Neutralizar Selecionados</button>
+                <button class="btn btn-sm" id="step1-bulk-exclude" style="background:#dc2626;color:#fff">🚫 Blacklist Selecionados</button>
                 <button class="btn btn-sm" id="step1-apply-criteria" style="background:var(--blue);color:#fff">📐 Aplicar Critérios (${places.length})</button>
                 <button class="btn btn-sm btn-gray" id="step1-dismiss">✖ Fechar</button>
               </div>
@@ -2993,23 +2996,31 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                   <table style="width:100%;border-collapse:collapse;font-size:13px">
                     <thead>
                       <tr style="border-bottom:2px solid var(--border);text-align:left">
+                        <th style="padding:8px;width:32px"><input type="checkbox" id="step1-select-all"></th>
                         <th style="padding:8px">Nome</th>
                         <th style="padding:8px">Endereço</th>
                         <th style="padding:8px">Tipo</th>
                         <th style="padding:8px">Nota</th>
                         <th style="padding:8px">Reviews</th>
                         <th style="padding:8px">Cidade</th>
+                        <th style="padding:8px;text-align:right">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
-                      ${places.map(p => `
-                        <tr style="border-bottom:1px solid var(--border)">
+                      ${places.map((p, i) => `
+                        <tr style="border-bottom:1px solid var(--border)" id="step1-row-${i}">
+                          <td style="padding:8px"><input type="checkbox" class="step1-row-check" data-idx="${i}"></td>
                           <td style="padding:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.name)}</td>
                           <td style="padding:8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)">${escHtml(p.formatted_address || '')}</td>
                           <td style="padding:8px"><span style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:11px">${escHtml(getTypeLabel(p.types))}</span></td>
                           <td style="padding:8px">${p.rating ? '⭐ ' + p.rating.toFixed(1) : '—'}</td>
                           <td style="padding:8px">${p.user_ratings_total || 0}</td>
                           <td style="padding:8px;font-size:12px">${escHtml(p.city_name)}</td>
+                          <td style="padding:8px;text-align:right;white-space:nowrap">
+                            <button class="btn btn-sm" style="background:#16a34a;color:#fff;padding:2px 8px;font-size:11px" data-step1-approve="${i}" title="Pré-aprovar">✅</button>
+                            <button class="btn btn-sm btn-gray" style="padding:2px 8px;font-size:11px" data-step1-neutral="${i}" title="Neutralizar">⏸️</button>
+                            <button class="btn btn-sm" style="background:#dc2626;color:#fff;padding:2px 8px;font-size:11px" data-step1-exclude="${i}" title="Blacklist">🚫</button>
+                          </td>
                         </tr>
                       `).join('')}
                     </tbody>
@@ -3030,6 +3041,130 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           btn.textContent = '⏳ Aplicando…';
           await runApplyCriteria(container, places, cityList);
         });
+
+        document.getElementById('step1-select-all')?.addEventListener('change', (e) => {
+          container.querySelectorAll('.step1-row-check').forEach(cb => { cb.checked = e.target.checked; });
+        });
+
+        container.querySelectorAll('[data-step1-approve]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const idx = parseInt(btn.dataset.step1Approve);
+            const p = places[idx];
+            if (!p) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch('/admin/pipeline/triage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  city_id: p.city_id, city_name: p.city_name,
+                  places: [{ place_id: p.place_id, name: p.name, formatted_address: p.formatted_address, types: p.types, lat: p.location.lat, lng: p.location.lng, photo_reference: p.photos?.[0]?.photo_reference }],
+                }),
+              });
+              if (res.ok) {
+                const row = document.getElementById('step1-row-' + idx);
+                if (row) row.style.opacity = '0.5';
+                btn.textContent = '✓';
+              } else {
+                btn.disabled = false;
+              }
+            } catch { btn.disabled = false; }
+          });
+        });
+
+        container.querySelectorAll('[data-step1-neutral]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const row = document.getElementById('step1-row-' + btn.dataset.step1Neutral);
+            if (row) row.style.display = 'none';
+          });
+        });
+
+        container.querySelectorAll('[data-step1-exclude]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const idx = parseInt(btn.dataset.step1Exclude);
+            const p = places[idx];
+            if (!p) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch('/admin/blacklist', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  items: [{ place_id: p.place_id, city_id: p.city_id, city_name: p.city_name, nome: p.name, tipo: p.types?.[0] || '' }],
+                }),
+              });
+              if (res.ok) {
+                const row = document.getElementById('step1-row-' + idx);
+                if (row) row.style.display = 'none';
+              } else {
+                btn.disabled = false;
+              }
+            } catch { btn.disabled = false; }
+          });
+        });
+
+        document.getElementById('step1-bulk-approve')?.addEventListener('click', async () => {
+          const checked = [...container.querySelectorAll('.step1-row-check:checked')];
+          if (checked.length === 0) return;
+          const byCity = {};
+          for (const cb of checked) {
+            const idx = parseInt(cb.dataset.idx);
+            const p = places[idx];
+            if (!p) continue;
+            if (!byCity[p.city_id]) byCity[p.city_id] = { city_name: p.city_name, places: [], idxs: [] };
+            byCity[p.city_id].places.push({ place_id: p.place_id, name: p.name, formatted_address: p.formatted_address, types: p.types, lat: p.location.lat, lng: p.location.lng, photo_reference: p.photos?.[0]?.photo_reference });
+            byCity[p.city_id].idxs.push(idx);
+          }
+          for (const [cityId, data] of Object.entries(byCity)) {
+            try {
+              const res = await apiFetch('/admin/pipeline/triage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ city_id: cityId, city_name: data.city_name, places: data.places }),
+              });
+              if (res.ok) {
+                for (const idx of data.idxs) {
+                  const row = document.getElementById('step1-row-' + idx);
+                  if (row) row.style.opacity = '0.5';
+                }
+              }
+            } catch {}
+          }
+        });
+
+        document.getElementById('step1-bulk-neutral')?.addEventListener('click', () => {
+          container.querySelectorAll('.step1-row-check:checked').forEach(cb => {
+            const row = document.getElementById('step1-row-' + cb.dataset.idx);
+            if (row) row.style.display = 'none';
+          });
+        });
+
+        document.getElementById('step1-bulk-exclude')?.addEventListener('click', async () => {
+          const checked = [...container.querySelectorAll('.step1-row-check:checked')];
+          if (checked.length === 0) return;
+          const items = [];
+          const idxs = [];
+          for (const cb of checked) {
+            const idx = parseInt(cb.dataset.idx);
+            const p = places[idx];
+            if (!p) continue;
+            items.push({ place_id: p.place_id, city_id: p.city_id, city_name: p.city_name, nome: p.name, tipo: p.types?.[0] || '' });
+            idxs.push(idx);
+          }
+          try {
+            const res = await apiFetch('/admin/blacklist', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items }),
+            });
+            if (res.ok) {
+              for (const idx of idxs) {
+                const row = document.getElementById('step1-row-' + idx);
+                if (row) row.style.display = 'none';
+              }
+            }
+          } catch {}
+        });
       }
 
       // Step 2: call apply-criteria and show filtered results
@@ -3038,6 +3173,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
 
         const allCriteria = [];
         const errors = [];
+        let activeCriteria = [];
 
         // group by city_id so we can send one request per city
         const byCity = {};
@@ -3058,18 +3194,36 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             for (const p of result.places) {
               allCriteria.push({ ...p, city_id: cityId, city_name: data.city_name });
             }
+            if (result.active_criteria && result.active_criteria.length > 0) {
+              activeCriteria = result.active_criteria;
+            }
           } catch (e) {
             errors.push(`${data.city_name}: ${e.message}`);
           }
         }
 
-        renderStep2(container, allCriteria, errors);
+        renderStep2(container, allCriteria, errors, activeCriteria);
       }
 
-      function renderStep2(container, places, errors) {
+      function renderStep2(container, places, errors, activeCriteria) {
+        activeCriteria = activeCriteria || [];
         const newPassing = places.filter(p => p.passed_criteria && !p.already_exists);
         const passed = places.filter(p => p.passed_criteria).length;
         const rejected = places.length - passed;
+
+        const criteriaTooltip = activeCriteria.length > 0
+          ? activeCriteria.map(c => escHtml(c.label)).join(', ')
+          : '';
+
+        const criteriaCell = (p) => {
+          if (!p.passed_criteria) {
+            return `<span style="background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:4px;font-size:11px" title="${escHtml(p.rejection_reason||'')}">🚫 ${escHtml(p.rejection_reason||'Na blacklist')}</span>`;
+          }
+          if (activeCriteria.length === 0) {
+            return '<span style="background:#f3f4f6;color:var(--text-muted);padding:2px 6px;border-radius:4px;font-size:11px">Sem critérios ativos</span>';
+          }
+          return `<span style="background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:11px" title="${criteriaTooltip}">✓ Livre (${activeCriteria.length} critério(s))</span>`;
+        };
 
         container.innerHTML = `
           <div style="margin-top:16px;padding:16px;background:var(--bg-card);border-radius:10px;border:1px solid var(--border)">
@@ -3078,10 +3232,11 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
               <h3 style="margin:0;font-size:16px">
                 📐 Critérios Aplicados —
                 <span style="color:#16a34a">${passed} aprovado(s)</span>,
-                <span style="color:#dc2626">${rejected} rejeitado(s)</span>,
+                <span style="color:#dc2626">${rejected} na blacklist</span>,
                 <span style="color:#166534">${newPassing.length} novo(s) para fila</span>
               </h3>
-              <div style="display:flex;gap:8px">
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-sm" id="step2-bulk-approve" style="background:#16a34a;color:#fff">✅ Pré-aprovar Selecionados</button>
                 <button class="btn btn-sm" id="step2-insert-all" style="background:#16a34a;color:#fff" ${newPassing.length === 0 ? 'disabled' : ''}>✅ Inserir na Fila (${newPassing.length})</button>
                 <button class="btn btn-sm btn-gray" id="step2-neutral-all">⏸️ Neutralizar Todos</button>
                 <button class="btn btn-sm btn-gray" id="step2-dismiss">✖ Fechar</button>
@@ -3094,6 +3249,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                   <table style="width:100%;border-collapse:collapse;font-size:13px">
                     <thead>
                       <tr style="border-bottom:2px solid var(--border);text-align:left">
+                        <th style="padding:8px;width:32px"><input type="checkbox" id="step2-select-all"></th>
                         <th style="padding:8px">Nome</th>
                         <th style="padding:8px">Tipo</th>
                         <th style="padding:8px">Nota</th>
@@ -3106,24 +3262,21 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                     <tbody>
                       ${places.map((p, i) => `
                         <tr style="border-bottom:1px solid var(--border)" id="step2-row-${i}">
+                          <td style="padding:8px"><input type="checkbox" class="step2-row-check" data-idx="${i}"></td>
                           <td style="padding:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(p.formatted_address)}">${escHtml(p.name)}</td>
                           <td style="padding:8px"><span style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:11px">${escHtml(getTypeLabel(p.types))}</span></td>
                           <td style="padding:8px">${p.rating ? '⭐ ' + p.rating.toFixed(1) : '—'}</td>
                           <td style="padding:8px;font-size:12px">${escHtml(p.city_name)}</td>
-                          <td style="padding:8px">
-                            ${p.passed_criteria
-                              ? '<span style="background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:11px">✓ Aprovado</span>'
-                              : `<span style="background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:4px;font-size:11px" title="${escHtml(p.rejection_reason||'')}">✗ ${escHtml(p.rejection_reason||'Rejeitado')}</span>`}
-                          </td>
+                          <td style="padding:8px">${criteriaCell(p)}</td>
                           <td style="padding:8px">
                             ${p.already_exists
                               ? '<span style="background:#e0f2fe;color:#0369a1;padding:2px 6px;border-radius:4px;font-size:11px">Já existe</span>'
                               : '<span style="background:#f3f4f6;color:var(--text-muted);padding:2px 6px;border-radius:4px;font-size:11px">Novo</span>'}
                           </td>
                           <td style="padding:8px;text-align:right;white-space:nowrap">
-                            ${p.passed_criteria && !p.already_exists ? `<button class="btn btn-sm" style="background:#16a34a;color:#fff;padding:2px 8px;font-size:11px" data-step2-approve="${i}" title="Inserir na fila">✅</button>` : ''}
+                            <button class="btn btn-sm" style="background:#16a34a;color:#fff;padding:2px 8px;font-size:11px" data-step2-approve="${i}" title="${p.already_exists ? 'Já existe no banco' : 'Inserir na fila'}">✅</button>
                             <button class="btn btn-sm btn-gray" style="padding:2px 8px;font-size:11px" data-step2-neutral="${i}" title="Neutralizar">⏸️</button>
-                            ${p.passed_criteria ? `<button class="btn btn-sm" style="background:#dc2626;color:#fff;padding:2px 8px;font-size:11px" data-step2-exclude="${i}" title="Blacklist">🚫</button>` : ''}
+                            <button class="btn btn-sm" style="background:#dc2626;color:#fff;padding:2px 8px;font-size:11px" data-step2-exclude="${i}" title="Blacklist">🚫</button>
                           </td>
                         </tr>
                       `).join('')}
@@ -3137,6 +3290,10 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         document.getElementById('step2-dismiss')?.addEventListener('click', () => {
           container.innerHTML = '';
           renderCidades();
+        });
+
+        document.getElementById('step2-select-all')?.addEventListener('change', (e) => {
+          container.querySelectorAll('.step2-row-check').forEach(cb => { cb.checked = e.target.checked; });
         });
 
         document.getElementById('step2-neutral-all')?.addEventListener('click', () => {
@@ -3153,11 +3310,40 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           await insertIntoQueue(container, places, newPassing);
         });
 
+        document.getElementById('step2-bulk-approve')?.addEventListener('click', async () => {
+          const checked = [...container.querySelectorAll('.step2-row-check:checked')];
+          if (checked.length === 0) return;
+          const byCity = {};
+          for (const cb of checked) {
+            const idx = parseInt(cb.dataset.idx);
+            const p = places[idx];
+            if (!p) continue;
+            if (!byCity[p.city_id]) byCity[p.city_id] = { city_name: p.city_name, places: [], idxs: [] };
+            byCity[p.city_id].places.push({ place_id: p.place_id, name: p.name, formatted_address: p.formatted_address, types: p.types, lat: p.location.lat, lng: p.location.lng, photo_reference: p.photos?.[0]?.photo_reference });
+            byCity[p.city_id].idxs.push(idx);
+          }
+          for (const [cityId, data] of Object.entries(byCity)) {
+            try {
+              const res = await apiFetch('/admin/pipeline/triage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ city_id: cityId, city_name: data.city_name, places: data.places }),
+              });
+              if (res.ok) {
+                for (const idx of data.idxs) {
+                  const row = document.getElementById('step2-row-' + idx);
+                  if (row) row.style.opacity = '0.5';
+                }
+              }
+            } catch {}
+          }
+        });
+
         container.querySelectorAll('[data-step2-approve]').forEach(btn => {
           btn.addEventListener('click', async () => {
             const idx = parseInt(btn.dataset.step2Approve);
             const p = places[idx];
-            if (!p || !p.passed_criteria || p.already_exists) return;
+            if (!p) return;
             btn.disabled = true;
             try {
               const res = await apiFetch('/admin/pipeline/triage', {
@@ -3165,19 +3351,21 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   city_id: p.city_id, city_name: p.city_name,
-                  places: [{ place_id: p.place_id, name: p.name, formatted_address: p.formatted_address, types: p.types, lat: p.location.lat, lng: p.location.lng }],
+                  places: [{ place_id: p.place_id, name: p.name, formatted_address: p.formatted_address, types: p.types, lat: p.location.lat, lng: p.location.lng, photo_reference: p.photos?.[0]?.photo_reference }],
                 }),
               });
               if (res.ok) {
                 const row = document.getElementById('step2-row-' + idx);
                 if (row) {
                   row.style.opacity = '0.5';
-                  const dbCell = row.querySelector('td:nth-child(6)');
+                  const dbCell = row.querySelector('td:nth-child(7)');
                   if (dbCell) dbCell.innerHTML = '<span style="background:#e0f2fe;color:#0369a1;padding:2px 6px;border-radius:4px;font-size:11px">Na fila</span>';
                 }
-                btn.remove();
+                btn.textContent = '✓';
+              } else {
+                btn.disabled = false;
               }
-            } catch {}
+            } catch { btn.disabled = false; }
           });
         });
 
@@ -3199,14 +3387,16 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  items: [{ place_id: p.place_id, city_id: p.city_id, city_name: p.city_name, nome: p.name, tipo: p.types[0] || '' }],
+                  items: [{ place_id: p.place_id, city_id: p.city_id, city_name: p.city_name, nome: p.name, tipo: p.types?.[0] || '' }],
                 }),
               });
               if (res.ok) {
                 const row = document.getElementById('step2-row-' + idx);
                 if (row) row.style.display = 'none';
+              } else {
+                btn.disabled = false;
               }
-            } catch {}
+            } catch { btn.disabled = false; }
           });
         });
       }
@@ -3221,6 +3411,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           byCity[p.city_id].places.push({
             place_id: p.place_id, name: p.name, formatted_address: p.formatted_address,
             types: p.types, lat: p.location.lat, lng: p.location.lng,
+            photo_reference: p.photos?.[0]?.photo_reference,
           });
         }
 
@@ -3529,8 +3720,8 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
 
           const nome   = resolvedCity ? resolvedCity.nome   : city.nome;
           const estado = resolvedCity ? resolvedCity.estado : city.estado;
-          const lat    = resolvedCity ? resolvedCity.latitude  : (city.latitude  != null ? parseFloat(city.latitude)  : null);
-          const lng    = resolvedCity ? resolvedCity.longitude : (city.longitude != null ? parseFloat(city.longitude) : null);
+          const lat    = resolvedCity ? parseFloat(resolvedCity.latitude)  : (city.latitude  != null ? parseFloat(city.latitude)  : null);
+          const lng    = resolvedCity ? parseFloat(resolvedCity.longitude) : (city.longitude != null ? parseFloat(city.longitude) : null);
           const raio   = parseInt(document.getElementById('cid-raio').value, 10);
           const ativa  = document.getElementById('cid-ativa').checked;
           const promptText = document.getElementById('cid-prompt').value.trim();
@@ -3581,8 +3772,12 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
       const CURATION_LIMIT     = 10;
       let publishedCityId      = '';
       let publishedCityName    = '';
+      let activeCuraCities     = [];          // cache das cidades ativas para o dropdown
+      let selectedCurationIds  = new Set();   // IDs selecionados para ação em massa
 
       async function renderCuradoria() {
+        activeCuraCities = [];
+        selectedCurationIds.clear();
         pageContent.innerHTML = `
           <div class="mod-header">
             <h2>🔍 Fila de Curadoria</h2>
@@ -3616,7 +3811,123 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         }
       }
 
-      function renderFilaTab(container) {
+      function updateBulkButtons() {
+        const count = selectedCurationIds.size;
+
+        const approveBtn      = document.getElementById('bulk-approve-btn');
+        const rejectBtn       = document.getElementById('bulk-reject-btn');
+        const toPendingBtn    = document.getElementById('bulk-to-pending-btn');
+        const toRejectedBtn   = document.getElementById('bulk-to-rejected-btn');
+        const toApprovedBtn   = document.getElementById('bulk-to-approved-btn');
+        const typeComerBtn    = document.getElementById('bulk-type-comer-btn');
+        const typeParquesBtn  = document.getElementById('bulk-type-parques-btn');
+
+        if (approveBtn) {
+          approveBtn.style.display = count > 0 ? '' : 'none';
+          approveBtn.textContent   = `✓ Aprovar Selecionados (${count})`;
+        }
+        if (rejectBtn) {
+          rejectBtn.style.display = count > 0 ? '' : 'none';
+          rejectBtn.textContent   = `✕ Rejeitar Selecionados (${count})`;
+        }
+        if (toPendingBtn) {
+          toPendingBtn.style.display = count > 0 ? '' : 'none';
+          toPendingBtn.textContent   = `↩ Voltar para Fila (${count})`;
+        }
+        if (toRejectedBtn) {
+          toRejectedBtn.style.display = count > 0 ? '' : 'none';
+          toRejectedBtn.textContent   = `✕ Mover para Rejeitados (${count})`;
+        }
+        if (toApprovedBtn) {
+          toApprovedBtn.style.display = count > 0 ? '' : 'none';
+          toApprovedBtn.textContent   = `✓ Mover para Aprovados (${count})`;
+        }
+        if (typeComerBtn) {
+          typeComerBtn.style.display = count > 0 ? '' : 'none';
+          typeComerBtn.textContent   = `🍽 Mudar para Comer (${count})`;
+        }
+        if (typeParquesBtn) {
+          typeParquesBtn.style.display = count > 0 ? '' : 'none';
+          typeParquesBtn.textContent   = `🌳 Mudar para Parques (${count})`;
+        }
+
+        const selectAll = document.getElementById('curation-select-all');
+        if (selectAll) {
+          const checks  = [...document.querySelectorAll('.curation-item-check')];
+          const checked = checks.filter(c => c.checked).length;
+          selectAll.indeterminate = checked > 0 && checked < checks.length;
+          selectAll.checked = checks.length > 0 && checked === checks.length;
+        }
+      }
+
+      async function executeBulkCurationAction(action, ids) {
+        const approveBtn = document.getElementById('bulk-approve-btn');
+        const rejectBtn  = document.getElementById('bulk-reject-btn');
+        if (approveBtn) approveBtn.disabled = true;
+        if (rejectBtn)  rejectBtn.disabled  = true;
+        const errors = [];
+        let ok = 0;
+        for (const placeId of ids) {
+          try {
+            const res = await apiFetch(`/admin/curation/${encodeURIComponent(placeId)}/${action}`, {
+              method: 'POST', body: JSON.stringify({})
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+            ok++;
+          } catch(e) { errors.push(`${placeId}: ${e.message}`); }
+        }
+        selectedCurationIds.clear();
+        if (approveBtn) approveBtn.disabled = false;
+        if (rejectBtn)  rejectBtn.disabled  = false;
+        loadCurationList();
+        loadCuradoriaBadge();
+        if (errors.length > 0) {
+          const word = action === 'approve' ? 'aprovado' : 'rejeitado';
+          alert(`${ok} lugar(es) ${word}(s).\n\nFalhas (${errors.length}):\n${errors.join('\n')}`);
+        }
+      }
+
+      async function executeBulkResetAction(ids) {
+        const errors = [];
+        let ok = 0;
+        for (const placeId of ids) {
+          try {
+            const res = await apiFetch(`/admin/curation/${encodeURIComponent(placeId)}/reset`, {
+              method: 'POST', body: JSON.stringify({})
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+            ok++;
+          } catch(e) { errors.push(`${placeId}: ${e.message}`); }
+        }
+        selectedCurationIds.clear();
+        loadCurationList();
+        loadCuradoriaBadge();
+        if (errors.length > 0) {
+          alert(`${ok} lugar(es) devolvido(s) para a fila.\n\nFalhas (${errors.length}):\n${errors.join('\n')}`);
+        }
+      }
+
+      async function executeBulkChangeType(placeType, ids) {
+        const errors = [];
+        let ok = 0;
+        for (const placeId of ids) {
+          try {
+            const res = await apiFetch(`/admin/curation/${encodeURIComponent(placeId)}/place-type`, {
+              method: 'POST', body: JSON.stringify({ place_type: placeType })
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+            ok++;
+          } catch(e) { errors.push(`${placeId}: ${e.message}`); }
+        }
+        selectedCurationIds.clear();
+        loadCurationList();
+        if (errors.length > 0) {
+          alert(`${ok} lugar(es) atualizado(s).\n\nFalhas (${errors.length}):\n${errors.join('\n')}`);
+        }
+      }
+
+      async function renderFilaTab(container) {
+        selectedCurationIds.clear();
         container.innerHTML = `
           <div class="tabs-row" id="curation-tabs">
             <button class="tab-btn ${curationStatusFilter==='pendente'?'active':''}" data-cstatus="pendente">⏳ Pendentes <span id="pending-count-tab"></span></button>
@@ -3631,25 +3942,127 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           </div>
 
           <div class="search-bar" style="flex-wrap:wrap;gap:8px;margin-bottom:16px">
-            <input class="search-input" id="c-city" placeholder="Filtrar por cidade…" value="${escHtml(curationCityFilter)}" style="min-width:150px;flex:1" />
+            <select class="search-input" id="c-city" style="min-width:150px;flex:1"></select>
             <input class="search-input" id="c-cat" placeholder="Categoria…" value="${escHtml(curationCatFilter)}" style="min-width:130px;flex:1" />
-            <input class="search-input" id="c-min" placeholder="KidScore mín" value="${escHtml(curationMinScore)}" style="min-width:120px;max-width:140px" type="number" min="0" max="100" />
-            <input class="search-input" id="c-max" placeholder="KidScore máx" value="${escHtml(curationMaxScore)}" style="min-width:120px;max-width:140px" type="number" min="0" max="100" />
-            <button class="btn btn-orange" id="c-filter-btn">Filtrar</button>
-            <button class="btn btn-gray"   id="c-reset-btn">Limpar</button>
+            <button class="btn btn-gray" id="c-reset-btn">Limpar</button>
+          </div>
+
+          ${adminUser?.role !== 'analista' ? `
+            <div id="bulk-toolbar" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-card);border-radius:8px;margin-bottom:12px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);cursor:pointer">
+                <input type="checkbox" id="curation-select-all" style="width:15px;height:15px">
+                Selecionar todos
+              </label>
+              <div style="flex:1"></div>
+              ${curationStatusFilter === 'pendente' ? `
+                <button class="btn btn-green btn-sm" id="bulk-approve-btn" style="display:none">✓ Aprovar Selecionados (0)</button>
+                <button class="btn btn-red btn-sm"   id="bulk-reject-btn"  style="display:none">✕ Rejeitar Selecionados (0)</button>
+              ` : ''}
+              ${curationStatusFilter === 'aprovado' ? `
+                <button class="btn btn-gray btn-sm"  id="bulk-to-pending-btn"   style="display:none">↩ Voltar para Fila (0)</button>
+                <button class="btn btn-red btn-sm"   id="bulk-to-rejected-btn"  style="display:none">✕ Mover para Rejeitados (0)</button>
+                <button class="btn btn-sm"            id="bulk-type-comer-btn"   style="display:none;background:#fde68a;color:#854d0e">🍽 Mudar para Comer (0)</button>
+                <button class="btn btn-sm"            id="bulk-type-parques-btn" style="display:none;background:#bbf7d0;color:#166534">🌳 Mudar para Parques (0)</button>
+              ` : ''}
+              ${curationStatusFilter === 'rejeitado' ? `
+                <button class="btn btn-gray btn-sm"  id="bulk-to-pending-btn"   style="display:none">↩ Voltar para Fila (0)</button>
+                <button class="btn btn-green btn-sm" id="bulk-to-approved-btn"  style="display:none">✓ Mover para Aprovados (0)</button>
+                <button class="btn btn-sm"            id="bulk-type-comer-btn"   style="display:none;background:#fde68a;color:#854d0e">🍽 Mudar para Comer (0)</button>
+                <button class="btn btn-sm"            id="bulk-type-parques-btn" style="display:none;background:#bbf7d0;color:#166534">🌳 Mudar para Parques (0)</button>
+              ` : ''}
+            </div>
+          ` : ''}
+
+          <div style="margin-bottom:12px">
+            <button class="btn btn-gray" id="backfill-meta-btn" style="font-size:12px">🔄 Preencher nome/foto faltantes</button>
+            <span id="backfill-meta-status" style="font-size:12px;margin-left:8px;color:var(--text-muted)"></span>
           </div>
 
           <div id="curation-list"><div class="spinner-wrap"><div class="spinner"></div></div></div>
           <div id="curation-pagination" style="display:flex;gap:8px;justify-content:center;margin-top:16px"></div>
         `;
 
+        // Populate city dropdown
+        if (activeCuraCities.length === 0) {
+          try {
+            const res  = await apiFetch('/admin/cities');
+            const data = await res.json();
+            if (res.ok) activeCuraCities = (data.cities || []).filter(c => c.ativa);
+          } catch(e) { /* silent */ }
+        }
+        const citySelect = document.getElementById('c-city');
+        if (citySelect) {
+          citySelect.innerHTML =
+            `<option value="">Todas as cidades</option>` +
+            activeCuraCities.map(c =>
+              `<option value="${escHtml(c.nome)}" ${c.nome === curationCityFilter ? 'selected' : ''}>${escHtml(c.nome)}${c.estado ? ' — ' + escHtml(c.estado) : ''}</option>`
+            ).join('');
+        }
+
+        // Select-all and bulk action listeners
+        const selectAllChk = document.getElementById('curation-select-all');
+        if (selectAllChk) {
+          selectAllChk.addEventListener('change', () => {
+            document.querySelectorAll('.curation-item-check').forEach(chk => {
+              chk.checked = selectAllChk.checked;
+              selectAllChk.checked
+                ? selectedCurationIds.add(chk.dataset.id)
+                : selectedCurationIds.delete(chk.dataset.id);
+            });
+            updateBulkButtons();
+          });
+        }
+        document.getElementById('bulk-approve-btn')?.addEventListener('click', async () => {
+          const ids = [...selectedCurationIds];
+          if (!ids.length) return;
+          if (!confirm(`Aprovar ${ids.length} lugar(es) selecionado(s)?`)) return;
+          await executeBulkCurationAction('approve', ids);
+        });
+        document.getElementById('bulk-reject-btn')?.addEventListener('click', async () => {
+          const ids = [...selectedCurationIds];
+          if (!ids.length) return;
+          if (!confirm(`Rejeitar ${ids.length} lugar(es) selecionado(s)?`)) return;
+          await executeBulkCurationAction('reject', ids);
+        });
+        document.getElementById('bulk-to-pending-btn')?.addEventListener('click', async () => {
+          const ids = [...selectedCurationIds];
+          if (!ids.length) return;
+          if (!confirm(`Devolver ${ids.length} lugar(es) para a fila de curadoria?`)) return;
+          await executeBulkResetAction(ids);
+        });
+        document.getElementById('bulk-to-rejected-btn')?.addEventListener('click', async () => {
+          const ids = [...selectedCurationIds];
+          if (!ids.length) return;
+          if (!confirm(`Mover ${ids.length} lugar(es) para Rejeitados?`)) return;
+          await executeBulkCurationAction('reject', ids);
+        });
+        document.getElementById('bulk-to-approved-btn')?.addEventListener('click', async () => {
+          const ids = [...selectedCurationIds];
+          if (!ids.length) return;
+          if (!confirm(`Mover ${ids.length} lugar(es) para Aprovados?`)) return;
+          await executeBulkCurationAction('approve', ids);
+        });
+        document.getElementById('bulk-type-comer-btn')?.addEventListener('click', async () => {
+          const ids = [...selectedCurationIds];
+          if (!ids.length) return;
+          if (!confirm(`Mudar ${ids.length} lugar(es) para tipo Comer?`)) return;
+          await executeBulkChangeType('comer', ids);
+        });
+        document.getElementById('bulk-type-parques-btn')?.addEventListener('click', async () => {
+          const ids = [...selectedCurationIds];
+          if (!ids.length) return;
+          if (!confirm(`Mudar ${ids.length} lugar(es) para tipo Parques?`)) return;
+          await executeBulkChangeType('parques', ids);
+        });
+
         container.querySelectorAll('.tab-btn[data-cstatus]').forEach(btn => {
           btn.addEventListener('click', () => {
             curationStatusFilter = btn.dataset.cstatus;
             curationOffset = 0;
+            selectedCurationIds.clear();
             container.querySelectorAll('.tab-btn[data-cstatus]').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            loadCurationList();
+            renderFilaTab(container);
           });
         });
 
@@ -3666,23 +4079,46 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           renderFilaTab(container);
         });
 
-        document.getElementById('c-filter-btn').addEventListener('click', () => {
-          curationCityFilter  = document.getElementById('c-city').value.trim();
-          curationCatFilter   = document.getElementById('c-cat').value.trim();
-          curationMinScore    = document.getElementById('c-min').value.trim();
-          curationMaxScore    = document.getElementById('c-max').value.trim();
-          curationOffset      = 0;
+        let curationCatDebounce = null;
+        document.getElementById('c-city').addEventListener('change', () => {
+          curationCityFilter = document.getElementById('c-city').value.trim();
+          curationOffset = 0;
           loadCurationList();
+        });
+        document.getElementById('c-cat').addEventListener('input', () => {
+          clearTimeout(curationCatDebounce);
+          curationCatDebounce = setTimeout(() => {
+            curationCatFilter = document.getElementById('c-cat').value.trim();
+            curationOffset = 0;
+            loadCurationList();
+          }, 500);
         });
 
         document.getElementById('c-reset-btn').addEventListener('click', () => {
           curationCityFilter = curationCatFilter = curationMinScore = curationMaxScore = '';
           curationOffset = 0;
-          document.getElementById('c-city').value = '';
-          document.getElementById('c-cat').value  = '';
-          document.getElementById('c-min').value  = '';
-          document.getElementById('c-max').value  = '';
+          const citySelEl = document.getElementById('c-city');
+          if (citySelEl) citySelEl.value = '';
+          document.getElementById('c-cat').value = '';
           loadCurationList();
+        });
+
+        document.getElementById('backfill-meta-btn').addEventListener('click', async () => {
+          const btn = document.getElementById('backfill-meta-btn');
+          const status = document.getElementById('backfill-meta-status');
+          btn.disabled = true;
+          status.textContent = 'Buscando dados no Google Places…';
+          try {
+            const res = await apiFetch('/admin/curation/backfill-meta', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Erro');
+            status.textContent = `Concluído: ${data.updated} atualizado(s) de ${data.total} sem nome.`;
+            if (data.updated > 0) loadCurationList();
+          } catch(e) {
+            status.textContent = 'Erro: ' + e.message;
+          } finally {
+            btn.disabled = false;
+          }
         });
 
         loadCurationList();
@@ -4088,11 +4524,19 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
 
           return `
             <div class="card" style="margin-bottom:16px" data-place-id="${escHtml(item.place_id)}">
+              ${!isAnalista ? `
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                  <input type="checkbox" class="curation-item-check"
+                    data-id="${escHtml(item.place_id)}"
+                    style="width:16px;height:16px;flex-shrink:0;cursor:pointer"
+                    ${selectedCurationIds.has(item.place_id) ? 'checked' : ''}>
+                </div>
+              ` : ''}
               <div style="display:flex;gap:16px;align-items:flex-start">
                 <!-- Photo thumbnail -->
                 <div style="width:80px;height:80px;flex-shrink:0;border-radius:10px;overflow:hidden;background:#f3f4f6;display:flex;align-items:center;justify-content:center">
                   ${coverPhoto
-                    ? `<img src="${escHtml(coverPhoto.url)}" alt="foto" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`
+                    ? `<img src="${escHtml(coverPhoto.url)}" alt="foto" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.innerHTML='<span style=\\'font-size:28px\\'>🏪</span>'">`
                     : `<span style="font-size:28px">🏪</span>`
                   }
                 </div>
@@ -4100,10 +4544,25 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                 <div style="flex:1;min-width:0">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
                     <span style="font-size:15px;font-weight:700">${escHtml(item.name || item.place_id)}</span>
+                    <a href="https://www.google.com/maps/place/?q=place_id:${escHtml(item.place_id)}"
+                       target="_blank" rel="noopener"
+                       style="flex-shrink:0;width:28px;height:28px;border-radius:6px;background:#e8f5e9;color:#2e7d32;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-size:14px"
+                       title="Abrir no Google Maps">🗺️</a>
                     ${item.category ? `<span class="badge" style="background:#e0f2fe;color:#0369a1">${escHtml(item.category)}</span>` : ''}
                     ${score !== null ? `<span class="badge" style="background:${scoreColor}18;color:${scoreColor}">KidScore ${score}</span>` : ''}
                     ${item.place_type === 'comer' ? `<span class="badge" style="background:#fef9c3;color:#854d0e">🍽 Comer</span>` : ''}
                     ${item.place_type === 'parques' ? `<span class="badge" style="background:#dcfce7;color:#166534">🌳 Parques</span>` : ''}
+                    ${item.is_sponsored ? `<span class="badge" style="background:#fef3c7;color:#b45309">👑 Premium</span>` : ''}
+                    ${isPending && !isAnalista ? `
+                      <button class="btn btn-sm set-type-comer-btn" data-id="${escHtml(item.place_id)}"
+                        style="background:${item.place_type==='comer'?'#fde68a':'#f3f4f6'};color:${item.place_type==='comer'?'#854d0e':'#6b7280'};padding:2px 8px;font-size:12px;border:none;border-radius:6px;cursor:pointer">
+                        🍽 Comer
+                      </button>
+                      <button class="btn btn-sm set-type-parques-btn" data-id="${escHtml(item.place_id)}"
+                        style="background:${item.place_type==='parques'?'#bbf7d0':'#f3f4f6'};color:${item.place_type==='parques'?'#166534':'#6b7280'};padding:2px 8px;font-size:12px;border:none;border-radius:6px;cursor:pointer">
+                        🌳 Parques
+                      </button>
+                    ` : ''}
                   </div>
                   ${item.address ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">📍 ${escHtml(item.address)}</div>` : ''}
                   ${item.city ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">🏙️ ${escHtml(item.city)}</div>` : ''}
@@ -4126,73 +4585,55 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                 <div style="margin-top:10px;font-size:13px;color:var(--text);background:var(--bg);border-radius:8px;padding:10px 12px;line-height:1.5">${escHtml(item.description)}</div>
               ` : ''}
 
-              <!-- Photos grid -->
-              ${photos.length > 0 ? `
-                <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">FOTOS (${photos.length})</div>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap" class="photos-grid" data-place-id="${escHtml(item.place_id)}">
-                    ${photos.map(p => `
-                      <div style="position:relative;width:72px;height:72px;border-radius:8px;overflow:hidden;border:2px solid ${p.is_cover ? 'var(--primary)' : 'var(--border)'}">
-                        <img src="${escHtml(p.url)}" alt="foto" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'">
-                        ${!isAnalista ? `
-                          <div style="position:absolute;inset:0;background:rgba(0,0,0,0.4);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;opacity:0;transition:opacity 0.15s" class="photo-actions">
-                            ${!p.is_cover && isPending ? `<button class="btn btn-sm" style="background:rgba(255,255,255,0.9);color:#d97706;padding:3px 7px;font-size:10px" data-pid="${escHtml(p.id)}" data-place="${escHtml(item.place_id)}" title="Definir capa">★</button>` : ''}
-                            ${isPending ? `<button class="btn btn-sm" style="background:rgba(220,38,38,0.85);color:#fff;padding:3px 7px;font-size:10px" data-pid="${escHtml(p.id)}" title="Excluir" class="del-photo-btn">✕</button>` : ''}
-                          </div>
-                        ` : ''}
-                        ${p.is_cover ? `<span style="position:absolute;top:3px;right:3px;font-size:11px;background:var(--primary);color:#fff;border-radius:4px;padding:1px 4px">capa</span>` : ''}
-                      </div>
-                    `).join('')}
-                  </div>
-                </div>
-              ` : ''}
 
               <!-- Action buttons -->
-              ${isPending && !isAnalista ? `
+              ${!isAnalista ? `
                 <div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);flex-wrap:wrap">
-                  <button class="btn btn-red btn-sm reject-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✕ Rejeitar</button>
-                  <button class="btn btn-orange btn-sm edit-approve-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}" data-desc="${escHtml(item.description||'')}" data-place-type="${escHtml(item.place_type||'comer')}" style="margin-left:auto">✏️ Editar e Aprovar</button>
-                  <button class="btn btn-green btn-sm approve-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✓ Aprovar</button>
+                  ${isPending ? `
+                    <button class="btn btn-red btn-sm reject-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✕ Rejeitar</button>
+                    <button class="btn btn-orange btn-sm edit-approve-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}" data-desc="${escHtml(item.description||'')}" data-place-type="${escHtml(item.place_type||'comer')}" style="margin-left:auto">✏️ Editar e Aprovar</button>
+                    <button class="btn btn-green btn-sm approve-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✓ Aprovar</button>
+                  ` : ''}
+                  ${curationStatusFilter === 'aprovado' ? `
+                    <button class="btn btn-gray btn-sm reset-to-pending-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">↩ Voltar para Fila</button>
+                    <button class="btn btn-red btn-sm move-to-rejected-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✕ Mover para Rejeitados</button>
+                    <button class="btn btn-sm set-type-comer-btn" data-id="${escHtml(item.place_id)}"
+                      style="background:${item.place_type==='comer'?'#fde68a':'#f3f4f6'};color:${item.place_type==='comer'?'#854d0e':'#6b7280'};padding:4px 10px;border:none;border-radius:6px;cursor:pointer;font-size:13px">
+                      🍽 Comer
+                    </button>
+                    <button class="btn btn-sm set-type-parques-btn" data-id="${escHtml(item.place_id)}"
+                      style="background:${item.place_type==='parques'?'#bbf7d0':'#f3f4f6'};color:${item.place_type==='parques'?'#166534':'#6b7280'};padding:4px 10px;border:none;border-radius:6px;cursor:pointer;font-size:13px">
+                      🌳 Parques
+                    </button>
+                  ` : ''}
+                  ${curationStatusFilter === 'rejeitado' ? `
+                    <button class="btn btn-gray btn-sm reset-to-pending-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">↩ Voltar para Fila</button>
+                    <button class="btn btn-green btn-sm move-to-approved-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✓ Mover para Aprovados</button>
+                    <button class="btn btn-sm set-type-comer-btn" data-id="${escHtml(item.place_id)}"
+                      style="background:${item.place_type==='comer'?'#fde68a':'#f3f4f6'};color:${item.place_type==='comer'?'#854d0e':'#6b7280'};padding:4px 10px;border:none;border-radius:6px;cursor:pointer;font-size:13px">
+                      🍽 Comer
+                    </button>
+                    <button class="btn btn-sm set-type-parques-btn" data-id="${escHtml(item.place_id)}"
+                      style="background:${item.place_type==='parques'?'#bbf7d0':'#f3f4f6'};color:${item.place_type==='parques'?'#166534':'#6b7280'};padding:4px 10px;border:none;border-radius:6px;cursor:pointer;font-size:13px">
+                      🌳 Parques
+                    </button>
+                  ` : ''}
                 </div>
               ` : ''}
             </div>
           `;
         }).join('');
 
-        // Photo hover effects
-        listEl.querySelectorAll('.photos-grid .photo-actions').forEach(el => {
-          const wrap = el.parentElement;
-          wrap.addEventListener('mouseenter', () => el.style.opacity = '1');
-          wrap.addEventListener('mouseleave', () => el.style.opacity = '0');
-        });
-
-        // Set cover photo
-        listEl.querySelectorAll('[data-pid][data-place]').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            const pid    = btn.dataset.pid;
-            const placeId = btn.dataset.place;
-            btn.disabled = true;
-            try {
-              const res = await apiFetch(`/admin/photos/${pid}/cover`, { method: 'PATCH', body: JSON.stringify({ place_id: placeId }) });
-              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
-              loadCurationList();
-            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+        // Checkbox listeners for bulk selection
+        listEl.querySelectorAll('.curation-item-check').forEach(chk => {
+          chk.addEventListener('change', () => {
+            chk.checked
+              ? selectedCurationIds.add(chk.dataset.id)
+              : selectedCurationIds.delete(chk.dataset.id);
+            updateBulkButtons();
           });
         });
-
-        // Delete photo buttons
-        listEl.querySelectorAll('[data-pid]:not([data-place])').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            if (!confirm('Excluir esta foto?')) return;
-            const pid = btn.dataset.pid;
-            btn.disabled = true;
-            try {
-              const res = await apiFetch(`/admin/photos/${pid}`, { method: 'DELETE' });
-              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
-              loadCurationList();
-            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
-          });
-        });
+        updateBulkButtons();
 
         // Quick approve
         listEl.querySelectorAll('.approve-place-btn').forEach(btn => {
@@ -4234,6 +4675,83 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             const desc      = btn.dataset.desc;
             const placeType = btn.dataset.placeType || 'comer';
             openCurationEditModal(id, name, desc, placeType);
+          });
+        });
+
+        // Move to rejected
+        listEl.querySelectorAll('.move-to-rejected-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id   = btn.dataset.id;
+            const name = btn.dataset.name;
+            if (!confirm(`Mover "${name}" para Rejeitados?`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/curation/${id}/reject`, { method: 'POST', body: JSON.stringify({}) });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+              loadCuradoriaBadge();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Move to approved
+        listEl.querySelectorAll('.move-to-approved-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id   = btn.dataset.id;
+            const name = btn.dataset.name;
+            if (!confirm(`Mover "${name}" para Aprovados?`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/curation/${id}/approve`, { method: 'POST', body: JSON.stringify({}) });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+              loadCuradoriaBadge();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Reset to pending
+        listEl.querySelectorAll('.reset-to-pending-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id   = btn.dataset.id;
+            const name = btn.dataset.name;
+            if (!confirm(`Devolver "${name}" para a fila de curadoria (pendente)?`)) return;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/curation/${id}/reset`, { method: 'POST', body: JSON.stringify({}) });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+              loadCuradoriaBadge();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        // Set type comer/parques (individual card buttons)
+        listEl.querySelectorAll('.set-type-comer-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/curation/${encodeURIComponent(id)}/place-type`, {
+                method: 'POST', body: JSON.stringify({ place_type: 'comer' })
+              });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
+          });
+        });
+
+        listEl.querySelectorAll('.set-type-parques-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id;
+            btn.disabled = true;
+            try {
+              const res = await apiFetch(`/admin/curation/${encodeURIComponent(id)}/place-type`, {
+                method: 'POST', body: JSON.stringify({ place_type: 'parques' })
+              });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              loadCurationList();
+            } catch(e) { alert('Erro: ' + e.message); btn.disabled = false; }
           });
         });
 

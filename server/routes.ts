@@ -97,12 +97,14 @@ import {
   addToPublished,
   searchPlacesForPublishing,
   upsertPlaceWithCity,
+  updatePlaceType,
+  resetCurationItem,
 } from "./storage";
-import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting, pipelineBlacklist } from "@shared/schema";
+import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilterSchema, insertCitySchema, insertSponsorshipPlanSchema, insertSponsorshipContractSchema, type UserRole, type BackofficeRole, aiPrompts, kidscoreRules, customCriteria, cities, pipelineRuns, placesKidspot, aiProviders, pipelineRouting, pipelineBlacklist, placeKidspotMeta, placePhotos } from "@shared/schema";
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable, reverseGeocodeCity } from "./google-places";
 import { invalidatePromptCache } from "./ai-review-analysis";
-import { eq, desc, and, ilike, sql as sqlExpr } from "drizzle-orm";
+import { eq, desc, and, ilike, sql as sqlExpr, isNull, or } from "drizzle-orm";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 
@@ -2248,7 +2250,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const parsed = insertCitySchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
+        const flat = parsed.error.flatten();
+        const msg = [...flat.formErrors, ...Object.values(flat.fieldErrors).flat()].join(', ') || 'Dados inválidos';
+        res.status(400).json({ error: msg });
         return;
       }
       try {
@@ -2275,7 +2279,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const parsed = updateCitySchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
+        const flat = parsed.error.flatten();
+        const msg = [...flat.formErrors, ...Object.values(flat.fieldErrors).flat()].join(', ') || 'Dados inválidos';
+        res.status(400).json({ error: msg });
         return;
       }
       const cityId = req.params.id as string;
@@ -2445,6 +2451,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           types: z.array(z.string()).optional().default([]),
           lat: z.number(),
           lng: z.number(),
+          photo_reference: z.string().optional(),
         })),
       });
       const parsed = schema.safeParse(req.body);
@@ -2467,7 +2474,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               lng: String(place.lng),
               status: "pendente",
             });
-            await upsertPlaceMeta({ place_id: place.place_id, city: parsed.data.city_name });
+            await upsertPlaceMeta({ place_id: place.place_id, city: parsed.data.city_name, name: place.name, address: place.formatted_address });
+            if (place.photo_reference) {
+              const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(place.photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+              await addPlacePhoto({ place_id: place.place_id, url: photoUrl, photo_reference: place.photo_reference, order: 0 });
+            }
             inserted++;
           }
         }
@@ -2539,7 +2550,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const result = await applyCriteriaToPlaces(parsed.data.city_id, parsed.data.places);
         const passed = result.places.filter((p) => p.passed_criteria).length;
         const rejected = result.places.length - passed;
-        res.json({ places: result.places, passed, rejected });
+        res.json({ places: result.places, passed, rejected, active_criteria: result.active_criteria });
       } catch (err) {
         console.error("Pipeline apply-criteria error:", err);
         res.status(500).json({ error: (err as Error).message });
@@ -2977,6 +2988,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   }
 
+  app.post(
+    "/api/admin/curation/backfill-meta",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const missing = await db
+          .select({ place_id: placeKidspotMeta.place_id })
+          .from(placeKidspotMeta)
+          .where(or(isNull(placeKidspotMeta.name), eq(placeKidspotMeta.name, "")));
+
+        let updated = 0;
+        let failed = 0;
+        for (const row of missing) {
+          try {
+            const details = await getPlaceDetails(row.place_id);
+            await upsertPlaceMeta({ place_id: row.place_id, name: details.name, address: details.formatted_address });
+            const existingPhoto = await db.query.placePhotos.findFirst({
+              where: and(eq(placePhotos.place_id, row.place_id), eq(placePhotos.deleted, false)),
+            });
+            if (!existingPhoto && details.photos?.[0]?.photo_reference) {
+              const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(details.photos[0].photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+              await addPlacePhoto({ place_id: row.place_id, url: photoUrl, photo_reference: details.photos[0].photo_reference, order: 0 });
+            }
+            updated++;
+          } catch {
+            failed++;
+          }
+        }
+        res.json({ total: missing.length, updated, failed });
+      } catch (err) {
+        console.error("Backfill meta error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
   app.get(
     "/api/admin/curation/queue",
     requireAuth,
@@ -3008,9 +3056,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           limit,
           offset,
         });
-        res.json(result);
+        const sponsoredMap = await getActiveSponsoredPlaceIds();
+        const augmented = result.items.map(item => ({
+          ...item,
+          is_sponsored: sponsoredMap.has(item.place_id),
+        }));
+        res.json({ items: augmented, total: result.total });
       } catch (err) {
         console.error("Curation queue error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const placeTypeSchema = z.object({
+    place_type: z.enum(["comer", "parques"]),
+  });
+
+  app.post(
+    "/api/admin/curation/:placeId/place-type",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+      const parsed = placeTypeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+
+      try {
+        await updatePlaceType(placeId, parsed.data.place_type);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Update place type error:", err);
         res.status(500).json({ error: (err as Error).message });
       }
     },
@@ -3072,6 +3151,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ ok: true });
       } catch (err) {
         console.error("Reject curation error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/curation/:placeId/reset",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const placeId = req.params.placeId as string;
+      try {
+        await resetCurationItem(placeId);
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Reset curation error:", err);
         res.status(500).json({ error: (err as Error).message });
       }
     },
