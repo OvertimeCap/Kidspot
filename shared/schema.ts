@@ -300,6 +300,7 @@ export const placePhotos = pgTable("place_photos", {
   url: text("url").notNull(),
   photo_reference: text("photo_reference"),
   is_cover: boolean("is_cover").notNull().default(false),
+  is_kids_area: boolean("is_kids_area").notNull().default(false),
   order: integer("order").notNull().default(0),
   deleted: boolean("deleted").notNull().default(false),
   created_at: timestamp("created_at").defaultNow().notNull(),

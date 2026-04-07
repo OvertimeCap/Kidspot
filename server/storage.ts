@@ -1092,6 +1092,7 @@ export type CurationItem = {
   city: string;
   ciudad_id: string | null;
   place_type: "comer" | "parques" | null;
+  display_order: number | null;
   photos: PlacePhoto[];
 };
 
@@ -1132,6 +1133,7 @@ export async function listCurationQueue(opts: {
         updated_at: placeKidspotMeta.updated_at,
         curated_at: placeKidspotMeta.curated_at,
         place_type: placeKidspotMeta.place_type,
+        display_order: placeKidspotMeta.display_order,
         city: placesKidspot.city,
         ciudad_id: placesKidspot.ciudad_id,
       })
@@ -1347,8 +1349,60 @@ export async function setCoverPhoto(placeId: string, photoId: string): Promise<v
 export async function deletePlacePhoto(photoId: string): Promise<void> {
   await db
     .update(placePhotos)
-    .set({ deleted: true, is_cover: false })
+    .set({ deleted: true, is_cover: false, is_kids_area: false })
     .where(eq(placePhotos.id, photoId));
+}
+
+export async function getPhotoById(photoId: string): Promise<PlacePhoto | null> {
+  const [photo] = await db
+    .select()
+    .from(placePhotos)
+    .where(eq(placePhotos.id, photoId))
+    .limit(1);
+  return photo ?? null;
+}
+
+export async function countPlacePhotos(placeId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(placePhotos)
+    .where(and(eq(placePhotos.place_id, placeId), eq(placePhotos.deleted, false)));
+  return row?.count ?? 0;
+}
+
+export async function setKidsAreaPhoto(
+  placeId: string,
+  photoId: string,
+  isKidsArea: boolean,
+): Promise<void> {
+  if (isKidsArea) {
+    const existing = await db
+      .select({ id: placePhotos.id })
+      .from(placePhotos)
+      .where(
+        and(
+          eq(placePhotos.place_id, placeId),
+          eq(placePhotos.is_kids_area, true),
+          eq(placePhotos.deleted, false),
+          ne(placePhotos.id, photoId),
+        ),
+      );
+    if (existing.length >= 2) {
+      throw new Error("Limite de 2 fotos de área kids por local atingido");
+    }
+  }
+  await db
+    .update(placePhotos)
+    .set({ is_kids_area: isKidsArea })
+    .where(and(eq(placePhotos.id, photoId), eq(placePhotos.place_id, placeId)));
+}
+
+export async function listPlacePhotosForDisplay(placeId: string): Promise<PlacePhoto[]> {
+  return db
+    .select()
+    .from(placePhotos)
+    .where(and(eq(placePhotos.place_id, placeId), eq(placePhotos.deleted, false)))
+    .orderBy(desc(placePhotos.is_cover), asc(placePhotos.order));
 }
 
 /* ------------------------------------------------------------------ */

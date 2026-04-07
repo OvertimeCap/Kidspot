@@ -69,9 +69,13 @@ import {
   approveCurationItem,
   rejectCurationItem,
   listPlacePhotos,
+  listPlacePhotosForDisplay,
   addPlacePhoto,
   setCoverPhoto,
   deletePlacePhoto,
+  getPhotoById,
+  countPlacePhotos,
+  setKidsAreaPhoto,
   listSponsorshipPlans,
   getSponsorshipPlanById,
   createSponsorshipPlan,
@@ -105,6 +109,7 @@ import { insertReviewSchema, insertClaimSchema, insertFeedbackSchema, insertFilt
 import { requireAuth, requireAdmin, signToken, signBackofficeToken, verifyBackofficeToken, requireBackofficeAuth, requireRole, type AuthRequest } from "./auth";
 import { textSearchClaimable, reverseGeocodeCity } from "./google-places";
 import { invalidatePromptCache } from "./ai-review-analysis";
+import { uploadPartnerPhoto, deletePartnerPhotoFromStorage } from "./firebase";
 import { eq, desc, and, ilike, sql as sqlExpr, isNull, or } from "drizzle-orm";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
@@ -3740,6 +3745,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     photo_reference: z.string().optional(),
   });
 
+  const ingestToFilaSchema = ingestAndPublishSchema.extend({
+    target_status: z.enum(["pendente", "aprovado"]).default("pendente"),
+  });
+
+  app.post(
+    "/api/admin/google-places/ingest-to-fila",
+    requireAuth,
+    requireAdminOrCollaborator,
+    async (req: AuthRequest, res: Response) => {
+      const parsed = ingestToFilaSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const { place_id, name, address, category, city, ciudad_id, lat, lng, photo_reference, target_status } = parsed.data;
+      const userId = req.user!.userId;
+
+      try {
+        await upsertPlaceWithCity({ place_id, city, ciudad_id, lat, lng });
+        await upsertPlaceMeta({ place_id, name, address, category, city });
+
+        if (photo_reference) {
+          const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+          await addPlacePhoto({ place_id, url: photoUrl, photo_reference, order: 0 });
+        }
+
+        if (target_status === "aprovado") {
+          await approveCurationItem(place_id, userId);
+        }
+
+        res.status(201).json({ ok: true });
+      } catch (err) {
+        console.error("Ingest to fila error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
   app.post(
     "/api/admin/google-places/ingest-and-publish",
     requireAuth,
@@ -3772,6 +3815,175 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json({ ok: true });
       } catch (err) {
         console.error("Ingest and publish error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* Public — Place Photos (for place detail screen)                     */
+  /* ------------------------------------------------------------------ */
+
+  app.get("/api/places/:placeId/photos", async (req: AuthRequest, res: Response) => {
+    const placeId = req.params.placeId as string;
+    try {
+      const photos = await listPlacePhotosForDisplay(placeId);
+      res.json({ photos });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Partner — Photo Management                                          */
+  /* ------------------------------------------------------------------ */
+
+  async function requirePartnerWithPlace(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    if (!req.user) { res.status(401).json({ error: "Não autenticado" }); return; }
+    const dbUser = await getUserById(req.user.userId);
+    if (!dbUser) { res.status(401).json({ error: "Usuário não encontrado" }); return; }
+    if (dbUser.role !== "parceiro" && dbUser.role !== "estabelecimento") {
+      res.status(403).json({ error: "Acesso exclusivo para parceiros e estabelecimentos" });
+      return;
+    }
+    if (!dbUser.linked_place_id) {
+      res.status(403).json({ error: "Você precisa ter um local vinculado" });
+      return;
+    }
+    (req as AuthRequest & { dbUser: typeof dbUser }).dbUser = dbUser;
+    next();
+  }
+
+  app.get(
+    "/api/partner/places/:placeId/photos",
+    requireAuth,
+    requirePartnerWithPlace,
+    async (req: AuthRequest, res: Response) => {
+      const dbUser = (req as AuthRequest & { dbUser: Awaited<ReturnType<typeof getUserById>> }).dbUser!;
+      const placeId = req.params.placeId as string;
+      if (dbUser.linked_place_id !== placeId) {
+        res.status(403).json({ error: "Você só pode gerenciar fotos do seu local vinculado" });
+        return;
+      }
+      try {
+        const photos = await listPlacePhotos(placeId);
+        res.json({ photos });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const partnerUploadPhotoSchema = z.object({
+    photo_data: z
+      .string()
+      .regex(/^data:image\/(jpeg|jpg|png|webp);base64,/, "Formato de imagem inválido"),
+  });
+
+  app.post(
+    "/api/partner/places/:placeId/photos",
+    requireAuth,
+    requirePartnerWithPlace,
+    async (req: AuthRequest, res: Response) => {
+      const dbUser = (req as AuthRequest & { dbUser: Awaited<ReturnType<typeof getUserById>> }).dbUser!;
+      const placeId = req.params.placeId as string;
+      if (dbUser.linked_place_id !== placeId) {
+        res.status(403).json({ error: "Você só pode gerenciar fotos do seu local vinculado" });
+        return;
+      }
+      const parsed = partnerUploadPhotoSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const count = await countPlacePhotos(placeId);
+        if (count >= 8) {
+          res.status(409).json({ error: "Limite de 8 fotos por local atingido" });
+          return;
+        }
+        const base64Data = parsed.data.photo_data.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, "base64");
+        const photoId = crypto.randomUUID();
+        const publicUrl = await uploadPartnerPhoto(buffer, dbUser.id, placeId, photoId);
+        const photo = await addPlacePhoto({ place_id: placeId, url: publicUrl, order: count });
+        res.status(201).json({ photo });
+      } catch (err) {
+        console.error("Partner upload photo error:", err);
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/partner/photos/:photoId/cover",
+    requireAuth,
+    requirePartnerWithPlace,
+    async (req: AuthRequest, res: Response) => {
+      const dbUser = (req as AuthRequest & { dbUser: Awaited<ReturnType<typeof getUserById>> }).dbUser!;
+      const photoId = req.params.photoId as string;
+      try {
+        const photo = await getPhotoById(photoId);
+        if (!photo || photo.deleted) { res.status(404).json({ error: "Foto não encontrada" }); return; }
+        if (photo.place_id !== dbUser.linked_place_id) { res.status(403).json({ error: "Acesso negado" }); return; }
+        await setCoverPhoto(photo.place_id, photoId);
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    },
+  );
+
+  const kidsAreaSchema = z.object({ is_kids_area: z.boolean() });
+
+  app.patch(
+    "/api/partner/photos/:photoId/kids-area",
+    requireAuth,
+    requirePartnerWithPlace,
+    async (req: AuthRequest, res: Response) => {
+      const dbUser = (req as AuthRequest & { dbUser: Awaited<ReturnType<typeof getUserById>> }).dbUser!;
+      const photoId = req.params.photoId as string;
+      const parsed = kidsAreaSchema.safeParse(req.body);
+      if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+      try {
+        const photo = await getPhotoById(photoId);
+        if (!photo || photo.deleted) { res.status(404).json({ error: "Foto não encontrada" }); return; }
+        if (photo.place_id !== dbUser.linked_place_id) { res.status(403).json({ error: "Acesso negado" }); return; }
+        await setKidsAreaPhoto(photo.place_id, photoId, parsed.data.is_kids_area);
+        res.json({ ok: true });
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg.includes("Limite de 2")) {
+          res.status(409).json({ error: msg });
+        } else {
+          res.status(500).json({ error: msg });
+        }
+      }
+    },
+  );
+
+  app.delete(
+    "/api/partner/photos/:photoId",
+    requireAuth,
+    requirePartnerWithPlace,
+    async (req: AuthRequest, res: Response) => {
+      const dbUser = (req as AuthRequest & { dbUser: Awaited<ReturnType<typeof getUserById>> }).dbUser!;
+      const photoId = req.params.photoId as string;
+      try {
+        const photo = await getPhotoById(photoId);
+        if (!photo || photo.deleted) { res.status(404).json({ error: "Foto não encontrada" }); return; }
+        if (photo.place_id !== dbUser.linked_place_id) { res.status(403).json({ error: "Acesso negado" }); return; }
+        await deletePlacePhoto(photoId);
+        // If it's a Firebase-uploaded photo (no photo_reference), remove from storage
+        if (!photo.photo_reference) {
+          deletePartnerPhotoFromStorage(dbUser.id, photo.place_id, photoId).catch(() => {});
+        }
+        res.json({ ok: true });
+      } catch (err) {
         res.status(500).json({ error: (err as Error).message });
       }
     },

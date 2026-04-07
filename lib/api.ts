@@ -276,6 +276,66 @@ export async function createStory(photos: string[]): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Partner — Place Photos                                              */
+/* ------------------------------------------------------------------ */
+
+export type PlacePhoto = {
+  id: string;
+  place_id: string;
+  url: string;
+  photo_reference: string | null;
+  is_cover: boolean;
+  is_kids_area: boolean;
+  order: number;
+  deleted: boolean;
+  created_at: string;
+};
+
+export function resolvePhotoUrl(
+  photo: { url: string; photo_reference: string | null },
+  maxwidth = 400,
+): string {
+  if (photo.photo_reference) {
+    return getPhotoUrl(photo.photo_reference, maxwidth);
+  }
+  return photo.url;
+}
+
+export async function fetchPlacePhotos(placeId: string): Promise<PlacePhoto[]> {
+  const res = await apiRequest("GET", `/api/places/${encodeURIComponent(placeId)}/photos`);
+  const data = await res.json();
+  return data.photos ?? [];
+}
+
+export async function fetchPartnerPhotos(placeId: string): Promise<PlacePhoto[]> {
+  const res = await apiRequest("GET", `/api/partner/places/${encodeURIComponent(placeId)}/photos`);
+  const data = await res.json();
+  return data.photos ?? [];
+}
+
+export async function uploadPartnerPhoto(placeId: string, photoDataUri: string): Promise<PlacePhoto> {
+  const res = await apiRequest("POST", `/api/partner/places/${encodeURIComponent(placeId)}/photos`, {
+    photo_data: photoDataUri,
+  });
+  const data = await res.json();
+  return data.photo;
+}
+
+export async function setPartnerPhotoCover(photoId: string): Promise<void> {
+  await apiRequest("PATCH", `/api/partner/photos/${encodeURIComponent(photoId)}/cover`, {});
+}
+
+export async function setPartnerPhotoKidsArea(photoId: string, isKidsArea: boolean): Promise<void> {
+  await apiRequest("PATCH", `/api/partner/photos/${encodeURIComponent(photoId)}/kids-area`, {
+    is_kids_area: isKidsArea,
+  });
+}
+
+export async function deletePartnerPhoto(photoId: string): Promise<void> {
+  await apiRequest("DELETE", `/api/partner/photos/${encodeURIComponent(photoId)}`);
+}
+
+/* ------------------------------------------------------------------ */
 /* City-based curated places (Feature #23)                             */
 /* ------------------------------------------------------------------ */
 

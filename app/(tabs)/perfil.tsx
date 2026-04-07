@@ -282,9 +282,11 @@ export default function PerfilScreen() {
         </View>
       </View>
 
-      {user.role === "estabelecimento" && user.linked_place_id && (
+      {(user.role === "estabelecimento" || user.role === "parceiro") && user.linked_place_id && (
         <View style={[styles.section, { marginTop: 16 }]}>
-          <Text style={styles.sectionTitle}>Meu Estabelecimento</Text>
+          <Text style={styles.sectionTitle}>
+            {user.role === "parceiro" ? "Meu Local Parceiro" : "Meu Estabelecimento"}
+          </Text>
           <View style={[styles.linkedPlaceCard]}>
             <View style={styles.linkedPlaceHeader}>
               <View style={styles.verifiedBadge}>
@@ -300,6 +302,20 @@ export default function PerfilScreen() {
               </Text>
             </View>
           </View>
+
+          <Pressable
+            style={({ pressed }) => [styles.linkedPlaceAction, pressed && { opacity: 0.85 }]}
+            onPress={() => router.push("/partner/fotos")}
+          >
+            <View style={styles.linkedPlaceActionLeft}>
+              <Ionicons name="images-outline" size={22} color="#0891B2" />
+              <View>
+                <Text style={styles.linkedPlaceActionText}>Gerenciar Fotos</Text>
+                <Text style={styles.linkedPlaceActionSub}>Adicionar e editar fotos do local</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+          </Pressable>
         </View>
       )}
 
@@ -801,6 +817,33 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontFamily: "Inter_400Regular",
     lineHeight: 18,
+  },
+  linkedPlaceAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  linkedPlaceActionLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  linkedPlaceActionText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: Colors.text,
+    fontFamily: "Inter_600SemiBold",
+  },
+  linkedPlaceActionSub: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
   },
   claimStatusCard: {
     backgroundColor: "#fff",
