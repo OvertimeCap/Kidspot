@@ -68,8 +68,75 @@ Places follow: `pendente` → `aprovado` / `rejeitado`. Only `aprovado` places a
 
 ## Key Conventions
 
-- When adding new API routes, add the endpoint to `server/routes.ts` and the database logic to `server/storage.ts`.
+- **Routing (two-level rule)**:
+  - Isolated endpoints → add to `server/routes.ts` and the database logic to `server/storage.ts`.
+  - New feature route groups (3+ related routes) → create `server/routes/[feature].ts`, export a router, mount it in `server/index.ts`.
+  - New files must stay under **300 lines**. This rule applies to new or extracted files only; existing large files (e.g. `routes.ts`) are not subject to it.
 - Use Zod (`zod` + `drizzle-zod`) for request validation at route boundaries.
 - Frontend API calls use the helpers in `lib/api.ts`. Keep them there.
+- Run `npm run lint` before declaring any task complete.
 - The `replit.md` file contains architecture documentation; update it when making significant structural changes.
 - Ask for confirmation before adding new external dependencies or making major structural changes.
+- `AGENTS.md` takes precedence over this file when they conflict. Orchestration rules below are additive — they extend, not override, `AGENTS.md`.
+
+## Security Checklist
+
+Auto-review before closing any task that touches auth, routes, or schemas:
+
+- **JWT**: every new protected route uses `requireAuth`, `requireBackofficeAuth`, or `requireRole()`; roles match the two-system model (mobile 7-day / backoffice 2-hour); no endpoint silently skips middleware.
+- **Zod**: all route inputs (body, query, params) validated with explicit Zod schemas at the route boundary; no `as any` bypassing validation; insert operations use drizzle-zod insert schemas.
+- **Secrets**: no keys, tokens, or passwords hardcoded; all secrets via `process.env`.
+- **Lint**: `npm run lint` passes with zero new errors.
+
+## Orchestration Rules
+
+For **simple tasks** (single file, isolated change): use a single session.
+
+For **complex tasks**, form an **Agent Team**. A task is complex if it:
+1. Alters 3 or more files; or
+2. Involves backend + frontend + tests; or
+3. Touches auth, routes, database, permissions, or the admin panel; or
+4. Requires automated browser navigation via MCP (Playwright is configured in `.mcp.json`); or
+5. Requires structural refactoring or modularization.
+
+### Agent Team — Roles
+
+Create exactly these roles unless instructed otherwise:
+
+| # | Role | Responsibility |
+|---|---|---|
+| 1 | **Team Lead / Arquiteto** | Approves plan; coordinates agents |
+| 2 | **Desenvolvedor** | Implements code changes |
+| 3 | **QA de Código** | Runs lint, reviews types, contracts, regressions |
+| 4 | **Browser QA** | Validates flows in the browser via Playwright MCP |
+
+### Team Lead Rules
+- Do not approve vague plans.
+- Only approve plans that specify: scope, target files, risks, and validation strategy.
+- Provide enough context in tasks — teammates do not have the full conversation history.
+- Write **"PLANO APROVADO"** explicitly before the Developer starts coding.
+- Prefer teams of 3–4 agents; for tasks concentrated in one file, use sequential flow instead.
+
+### Developer Rules
+- Never expand `server/routes.ts` with new routes. Use `server/routes/[feature].ts` instead.
+- Prefer modularization in `server/routes/`.
+- Do not modify more files than necessary.
+- Preserve Zod, JWT, storage layer, and existing conventions.
+- New files must stay under 300 lines.
+
+### QA de Código Rules
+- Run `npm run lint` and other available local validations.
+- Review imports, types, route contracts, and obvious regressions.
+- Apply the Security Checklist above for any task touching auth, routes, or schemas.
+- Do not declare success without objective validation.
+
+### Browser QA Rules
+- Playwright MCP (headless Chrome) is always available via `.mcp.json`.
+- Read `TESTING_MAP.md` before executing flows. If it doesn't exist, create it at the project root documenting the flows you run.
+- Report errors with: affected screen, reproduction steps, and relevant console/network logs.
+
+### Handoff to Human
+Only involve the human when:
+- The plan is approved and ready to execute; or
+- Implementation is validated and ready for human testing; or
+- There is a real blocker requiring a product decision.

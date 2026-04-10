@@ -37,6 +37,7 @@ Follow these preferences:
 - Ask for confirmation before major structural changes.
 - Ask for confirmation before adding new dependencies.
 - Explain architectural or non-obvious decisions briefly and clearly.
+- For complex tasks (see Orchestration Rules in `CLAUDE.md`), form an Agent Team before starting implementation.
 
 ## Non-negotiable safety rules
 - Do not rename folders, move many files, or reorganize architecture without approval.
@@ -75,7 +76,11 @@ Expected folders and patterns:
 Backend rules:
 - Route handlers should not query the database directly if `server/storage.ts` is the established repository layer.
 - New database access should follow the existing storage/repository pattern already used in the codebase.
-- New endpoints should be added consistently with the current route organization.
+- **Routing (two-level rule)**:
+  - Isolated endpoints → add to `server/routes.ts` and database logic to `server/storage.ts`.
+  - New feature route groups (3+ related routes) → create `server/routes/[feature].ts`, export a router, mount it in `server/index.ts`.
+  - Never expand `server/routes.ts` with new route groups; prefer `server/routes/`.
+  - New files created during a task must stay under 300 lines. Existing large files (e.g. `routes.ts`) are not subject to this rule.
 - Use validation at the route boundary, preferably following the current Zod pattern where already present.
 
 ### Database
@@ -175,7 +180,7 @@ For every non-trivial task, follow this sequence:
 3. List planned file edits.
 4. Wait for approval if the change is structural, risky, or affects integrations.
 5. Implement the smallest viable change.
-6. Run lint/build checks when applicable.
+6. Run `npm run lint` before declaring any task complete. Apply the Security Checklist in `CLAUDE.md` for tasks touching auth, routes, or schemas.
 7. Report what changed, any risks, and any follow-up needed.
 
 ## What counts as a major change
@@ -199,12 +204,23 @@ When responding during development:
 - Flag uncertainty clearly
 - Prefer “I found X in code, but docs say Y” over guessing
 
+## Browser QA
+
+Playwright MCP is configured in `.mcp.json` (headless Chrome via `@playwright/mcp`) and is always available.
+
+Rules:
+- Read `TESTING_MAP.md` at the project root before running any flow. If it does not exist, create it and document the flows you execute.
+- Report errors with: affected screen, reproduction steps, and relevant console/network logs.
+- Do not declare a feature validated without running the corresponding flows.
+
 ## Priority order
 When deciding what to trust:
 1. Current codebase
 2. This `AGENTS.md`
 3. `CLAUDE.md`
 4. Other repository documentation
+
+The Orchestration Rules defined in `CLAUDE.md` are additive — they extend this file, not override it.
 
 ## Recommended first action for any new session
 Start by inspecting:
