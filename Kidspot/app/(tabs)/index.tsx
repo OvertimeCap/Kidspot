@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -10,28 +10,19 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 import {
-  searchPlaces,
   getBestType,
   haversineKm,
   formatDistance,
   getPhotoUrl,
   type PlaceWithScore,
 } from "@/lib/api";
-import { usePickedLocation } from "@/lib/picked-location-context";
+import { useHomeSearch, type UserLocation, type TypeFilter } from "@/lib/use-home-search";
 import StoriesRow, { type PlacePhotoMap } from "@/components/StoriesRow";
-
-type UserLocation = { lat: number; lng: number };
-type TypeFilter = "Todos" | "Restaurantes" | "Parques";
-
-const FOOD_TYPES = new Set(["restaurant", "cafe", "bakery", "meal_takeaway", "food"]);
-const PARK_TYPES = new Set([
-  "park", "playground", "amusement_center", "amusement_park", "zoo", "tourist_attraction",
-]);
+import MapViewScreen from "@/components/map/MapViewScreen";
 
 function PlaceCard({
   place,
@@ -129,244 +120,110 @@ function PlaceCard({
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { pickedLocation } = usePickedLocation();
+  const search = useHomeSearch();
+  const [viewMode, setViewMode] = useState<"list" | "map">("list");
 
-  const [results, setResults] = useState<PlaceWithScore[]>([]);
-  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
-  const [activeLabel, setActiveLabel] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [locationDenied, setLocationDenied] = useState(false);
-  const [searched, setSearched] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>("Todos");
-  const [placePhotoRefs, setPlacePhotoRefs] = useState<PlacePhotoMap>({});
-
-  const didAutoSearch = useRef(false);
-
-  const filteredResults = results.filter((place) => {
-    if (typeFilter === "Restaurantes")
-      return place.types.some((t) => FOOD_TYPES.has(t));
-    if (typeFilter === "Parques")
-      return place.types.some((t) => PARK_TYPES.has(t));
-    return true;
-  });
-
-  const doSearch = useCallback(
-    async (lat: number, lng: number, label?: string) => {
-      setLoading(true);
-      setError(null);
-      setTypeFilter("Todos");
-      try {
-        const places = await searchPlaces({
-          latitude: lat,
-          longitude: lng,
-          radius: 8000,
-          establishmentTypes: [
-            "park",
-            "playground",
-            "amusement_center",
-            "zoo",
-            "tourist_attraction",
-            "restaurant",
-            "cafe",
-          ],
-          sortBy: "kidScore",
-        });
-        setResults(places);
-        const photoMap: PlacePhotoMap = {};
-        for (const p of places) {
-          if (p.photos && p.photos.length > 0) {
-            photoMap[p.place_id] = p.photos[0].photo_reference;
-          }
-        }
-        setPlacePhotoRefs(photoMap);
-        setSearched(true);
-        setUserLocation({ lat, lng });
-        if (label) setActiveLabel(label);
-      } catch {
-        setError("Não foi possível buscar lugares. Tente novamente.");
-      } finally {
-        setLoading(false);
+  // Mapa de referências de foto para StoriesRow (derivado dos resultados da busca)
+  const placePhotoRefs = useMemo<PlacePhotoMap>(() => {
+    const map: PlacePhotoMap = {};
+    for (const p of search.results) {
+      if (p.photos && p.photos.length > 0) {
+        map[p.place_id] = p.photos[0].photo_reference;
       }
-    },
-    [],
-  );
-
-  const handleSearchNearby = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        setLocationDenied(true);
-        setLoading(false);
-        return;
-      }
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const { latitude, longitude } = loc.coords;
-      setUserLocation({ lat: latitude, lng: longitude });
-      await doSearch(latitude, longitude, "Localização atual");
-    } catch {
-      setError("Não foi possível obter sua localização.");
-      setLoading(false);
     }
-  }, [doSearch]);
-
-  useEffect(() => {
-    if (didAutoSearch.current) return;
-    didAutoSearch.current = true;
-    handleSearchNearby();
-  }, []);
-
-  useEffect(() => {
-    if (pickedLocation) {
-      setActiveLabel(pickedLocation.label);
-      doSearch(pickedLocation.lat, pickedLocation.lng, pickedLocation.label);
-    }
-  }, [pickedLocation]);
+    return map;
+  }, [search.results]);
 
   const openFiltros = useCallback(() => {
     router.push({
       pathname: "/filtros",
       params: {
-        lat: userLocation ? String(userLocation.lat) : undefined,
-        lng: userLocation ? String(userLocation.lng) : undefined,
+        lat: search.userLocation ? String(search.userLocation.lat) : undefined,
+        lng: search.userLocation ? String(search.userLocation.lng) : undefined,
       },
     });
-  }, [userLocation]);
+  }, [search.userLocation]);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
+      {/* Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.appName}>KidSpot</Text>
           <Text style={styles.tagline}>Lugares para a família</Text>
         </View>
-        <View style={styles.logoCircle}>
-          <Ionicons name="happy" size={28} color="#fff" />
+        <View style={styles.headerRight}>
+          {/* Toggle lista ↔ mapa: só aparece após a primeira busca */}
+          {search.searched && (
+            <Pressable
+              style={styles.toggleBtn}
+              onPress={() => setViewMode((v) => (v === "list" ? "map" : "list"))}
+              accessibilityLabel={viewMode === "list" ? "Ver mapa" : "Ver lista"}
+            >
+              <Ionicons
+                name={viewMode === "list" ? "map-outline" : "list-outline"}
+                size={20}
+                color="#fff"
+              />
+            </Pressable>
+          )}
+          <View style={styles.logoCircle}>
+            <Ionicons name="happy" size={28} color="#fff" />
+          </View>
         </View>
       </View>
 
-      <StoriesRow
-        userLat={userLocation?.lat}
-        userLng={userLocation?.lng}
-        placePhotoRefs={placePhotoRefs}
-      />
+      {/* Visualização em Mapa */}
+      {viewMode === "map" && search.searched ? (
+        <MapViewScreen
+          userLocation={search.userLocation}
+          typeFilter={search.typeFilter}
+        />
+      ) : (
+        <>
+          <StoriesRow
+            userLat={search.userLocation?.lat}
+            userLng={search.userLocation?.lng}
+            placePhotoRefs={placePhotoRefs}
+          />
 
-      {loading && (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Buscando lugares...</Text>
-        </View>
-      )}
+          {search.loading && (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.loadingText}>Buscando lugares...</Text>
+            </View>
+          )}
 
-      {error && !loading && (
-        <View style={styles.centered}>
-          <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
-          <Text style={styles.errorText}>{error}</Text>
-          <View style={styles.errorActions}>
-            <Pressable
-              style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
-              onPress={handleSearchNearby}
-            >
-              <Ionicons name="location" size={16} color="#fff" />
-              <Text style={styles.primaryBtnText}>Perto de mim</Text>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.btnPressed]}
-              onPress={openFiltros}
-            >
-              <Ionicons name="options-outline" size={16} color={Colors.primary} />
-              <Text style={styles.secondaryBtnText}>Filtros</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
-
-      {locationDenied && !searched && !loading && (
-        <View style={styles.centered}>
-          <Ionicons name="location-outline" size={48} color={Colors.textLight} />
-          <Text style={styles.emptyText}>
-            Permissão de localização negada.{"\n"}Escolha uma cidade nos filtros.
-          </Text>
-          <Pressable
-            style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
-            onPress={openFiltros}
-          >
-            <Ionicons name="options-outline" size={16} color="#fff" />
-            <Text style={styles.primaryBtnText}>Filtros</Text>
-          </Pressable>
-        </View>
-      )}
-
-      {searched && !loading && !error && (
-        <FlatList
-          data={filteredResults}
-          keyExtractor={(item) => item.place_id}
-          contentContainerStyle={[
-            styles.listContent,
-            { paddingBottom: Platform.OS === "web" ? 34 + 16 : insets.bottom + 16 },
-          ]}
-          ListHeaderComponent={(
-            <View>
-              <View style={styles.resultsHeader}>
-                <Text style={styles.resultsCount}>
-                  {filteredResults.length > 0
-                    ? `${filteredResults.length} lugares encontrados`
-                    : "Nenhum lugar encontrado"}
-                </Text>
-
-                {activeLabel && (
-                  <View style={styles.locationRow}>
-                    <Ionicons name="location" size={13} color={Colors.primary} />
-                    <Text style={styles.locationLabel} numberOfLines={1}>
-                      {activeLabel}
-                    </Text>
-                  </View>
-                )}
-
-                <View style={styles.filterRow}>
-                  {(["Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
-                    <Pressable
-                      key={f}
-                      style={({ pressed }) => [
-                        styles.typeFilterBtn,
-                        typeFilter === f && styles.typeFilterBtnActive,
-                        pressed && styles.btnPressed,
-                      ]}
-                      onPress={() => setTypeFilter(typeFilter === f ? "Todos" : f)}
-                    >
-                      <Text
-                        style={[
-                          styles.typeFilterBtnText,
-                          typeFilter === f && styles.typeFilterBtnTextActive,
-                        ]}
-                      >
-                        {f}
-                      </Text>
-                    </Pressable>
-                  ))}
-
-                  <Pressable
-                    style={({ pressed }) => [styles.filtrosBtn, pressed && styles.btnPressed]}
-                    onPress={openFiltros}
-                  >
-                    <Ionicons name="options-outline" size={15} color={Colors.primary} />
-                    <Text style={styles.filtrosBtnText}>Filtros</Text>
-                  </Pressable>
-                </View>
+          {search.error && !search.loading && (
+            <View style={styles.centered}>
+              <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
+              <Text style={styles.errorText}>{search.error}</Text>
+              <View style={styles.errorActions}>
+                <Pressable
+                  style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+                  onPress={search.handleSearchNearby}
+                >
+                  <Ionicons name="location" size={16} color="#fff" />
+                  <Text style={styles.primaryBtnText}>Perto de mim</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.secondaryBtn, pressed && styles.btnPressed]}
+                  onPress={openFiltros}
+                >
+                  <Ionicons name="options-outline" size={16} color={Colors.primary} />
+                  <Text style={styles.secondaryBtnText}>Filtros</Text>
+                </Pressable>
               </View>
             </View>
           )}
-          ListEmptyComponent={
+
+          {search.locationDenied && !search.searched && !search.loading && (
             <View style={styles.centered}>
-              <Ionicons name="sad-outline" size={48} color={Colors.textLight} />
+              <Ionicons name="location-outline" size={48} color={Colors.textLight} />
               <Text style={styles.emptyText}>
-                Nenhum lugar encontrado.{"\n"}Tente outra localização nos filtros.
+                Permissão de localização negada.{"\n"}Escolha uma cidade nos filtros.
               </Text>
               <Pressable
                 style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
@@ -376,11 +233,88 @@ export default function HomeScreen() {
                 <Text style={styles.primaryBtnText}>Filtros</Text>
               </Pressable>
             </View>
-          }
-          renderItem={({ item }) => (
-            <PlaceCard place={item} userLocation={userLocation} />
           )}
-        />
+
+          {search.searched && !search.loading && !search.error && (
+            <FlatList
+              data={search.filteredResults}
+              keyExtractor={(item) => item.place_id}
+              contentContainerStyle={[
+                styles.listContent,
+                { paddingBottom: Platform.OS === "web" ? 34 + 16 : insets.bottom + 16 },
+              ]}
+              ListHeaderComponent={(
+                <View>
+                  <View style={styles.resultsHeader}>
+                    <Text style={styles.resultsCount}>
+                      {search.filteredResults.length > 0
+                        ? `${search.filteredResults.length} lugares encontrados`
+                        : "Nenhum lugar encontrado"}
+                    </Text>
+
+                    {search.activeLabel && (
+                      <View style={styles.locationRow}>
+                        <Ionicons name="location" size={13} color={Colors.primary} />
+                        <Text style={styles.locationLabel} numberOfLines={1}>
+                          {search.activeLabel}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={styles.filterRow}>
+                      {(["Restaurantes", "Parques"] as TypeFilter[]).map((f) => (
+                        <Pressable
+                          key={f}
+                          style={({ pressed }) => [
+                            styles.typeFilterBtn,
+                            search.typeFilter === f && styles.typeFilterBtnActive,
+                            pressed && styles.btnPressed,
+                          ]}
+                          onPress={() => search.setTypeFilter(search.typeFilter === f ? "Todos" : f)}
+                        >
+                          <Text
+                            style={[
+                              styles.typeFilterBtnText,
+                              search.typeFilter === f && styles.typeFilterBtnTextActive,
+                            ]}
+                          >
+                            {f}
+                          </Text>
+                        </Pressable>
+                      ))}
+
+                      <Pressable
+                        style={({ pressed }) => [styles.filtrosBtn, pressed && styles.btnPressed]}
+                        onPress={openFiltros}
+                      >
+                        <Ionicons name="options-outline" size={15} color={Colors.primary} />
+                        <Text style={styles.filtrosBtnText}>Filtros</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              )}
+              ListEmptyComponent={
+                <View style={styles.centered}>
+                  <Ionicons name="sad-outline" size={48} color={Colors.textLight} />
+                  <Text style={styles.emptyText}>
+                    Nenhum lugar encontrado.{"\n"}Tente outra localização nos filtros.
+                  </Text>
+                  <Pressable
+                    style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+                    onPress={openFiltros}
+                  >
+                    <Ionicons name="options-outline" size={16} color="#fff" />
+                    <Text style={styles.primaryBtnText}>Filtros</Text>
+                  </Pressable>
+                </View>
+              }
+              renderItem={({ item }) => (
+                <PlaceCard place={item} userLocation={search.userLocation} />
+              )}
+            />
+          )}
+        </>
       )}
     </View>
   );
@@ -399,6 +333,19 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  toggleBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: Colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
   appName: {
     fontSize: 24,
