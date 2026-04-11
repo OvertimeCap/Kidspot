@@ -1,246 +1,119 @@
 # AGENTS.md
 
 ## Purpose
-Continue development of the KidSpot project without disrupting the existing architecture, conventions, or integrations already established in this repository.
-
-## First rules
-Before making any code change:
-1. Read this file completely.
-2. Read `CLAUDE.md` if it exists.
-3. Inspect the current codebase structure and confirm whether the implementation still matches this document.
-4. Summarize your understanding before any major task.
-5. If you detect inconsistencies between docs and code, trust the codebase first and report the mismatch explicitly.
-
-Do not start with broad refactors.
-Do not replace architecture patterns unless explicitly approved.
-Prefer small, safe, incremental changes.
-
-## Project overview
-KidSpot is a full-stack mobile application for discovering kid-friendly places.
-
-Current documented stack:
-- Frontend: Expo + React Native + TypeScript
-- Navigation: Expo Router
-- Server state: TanStack React Query
-- Backend: Express.js + TypeScript
-- Database: PostgreSQL with Drizzle ORM
-- Primary database host: Neon
-- File storage: Firebase Storage
-- Repository hosting: GitHub
-
-Important: some docs may be partially outdated. The current codebase is the source of truth. If code and docs differ, preserve the live implementation pattern already present in the repository and report the discrepancy.
-
-## Working style
-Follow these preferences:
-- Give clear and direct answers.
-- Work iteratively with small updates.
-- Ask for confirmation before major structural changes.
-- Ask for confirmation before adding new dependencies.
-- Explain architectural or non-obvious decisions briefly and clearly.
-- For complex tasks (see Orchestration Rules in `CLAUDE.md`), form an Agent Team before starting implementation.
-
-## Non-negotiable safety rules
-- Do not rename folders, move many files, or reorganize architecture without approval.
-- Do not swap libraries or services without approval.
-- Do not modify environment variable names lightly.
-- Do not introduce parallel patterns when one already exists.
-- Do not create duplicate service layers, auth flows, API clients, or storage abstractions.
-- Do not edit unrelated files in the same task.
-- Before editing, state which files you intend to change and why.
-- After editing, summarize exactly what changed.
-
-## Expected architecture
-### Frontend
-Expected folders and patterns:
-- `app/` for Expo Router screens
-- `components/` for reusable UI
-- `lib/` for shared frontend utilities and API helpers
-- Admin mobile screens in files like `app/admin-*.tsx`
-- Path aliases may include `@/*` and `@shared/*`
-
-Frontend rules:
-- Use Expo Router conventions already present in the project.
-- Use React Query for server state, fetching, caching, and mutations.
-- Keep API access centralized through existing helpers in `lib/api.ts` or the current equivalent.
-- Preserve existing auth flow with `AuthProvider` and AsyncStorage if still used in code.
-- Do not create new API access patterns if one already exists.
-
-### Backend
-Expected folders and patterns:
-- `server/index.ts` for Express setup
-- `server/routes.ts` for route definitions
-- `server/storage.ts` as the repository/data-access layer
-- `server/auth.ts` for auth middleware
-- Additional domain files such as pipeline, AI analysis, and KidScore logic
-
-Backend rules:
-- Route handlers should not query the database directly if `server/storage.ts` is the established repository layer.
-- New database access should follow the existing storage/repository pattern already used in the codebase.
-- **Routing (two-level rule)**:
-  - Isolated endpoints → add to `server/routes.ts` and database logic to `server/storage.ts`.
-  - New feature route groups (3+ related routes) → create `server/routes/[feature].ts`, export a router, mount it in `server/index.ts`.
-  - Never expand `server/routes.ts` with new route groups; prefer `server/routes/`.
-  - New files created during a task must stay under 300 lines. Existing large files (e.g. `routes.ts`) are not subject to this rule.
-- Use validation at the route boundary, preferably following the current Zod pattern where already present.
-
-### Database
-Documented database expectations:
-- PostgreSQL with Drizzle ORM
-- Neon as primary database host
-- Prefer `NEON_DATABASE_URL` when present
-- Fall back to `DATABASE_URL` if that is how the current code is implemented
-
-Database rules:
-- Treat schema changes carefully.
-- Before changing schema, inspect `shared/schema.ts` and current migration/db push workflow.
-- Preserve naming conventions already used by the existing tables and columns.
-- If a schema change is required, explain impact first.
-
-Documented key tables include:
-- `users`
-- `backoffice_users`
-- `places_kidspot`
-- `cities`
-- `reviews`
-- `favorites`
-- `enrichment_cache`
-- `pipeline_runs`
-- `kid_flags`
-
-### Storage
-Project note:
-- Firebase Storage is considered part of the current project setup.
-
-Storage rules:
-- Before implementing upload or file changes, inspect the current Firebase integration in code.
-- Reuse the existing Firebase Storage setup, helpers, bucket configuration, and naming conventions.
-- Do not create a second storage approach unless explicitly requested.
-
-### Auth
-Documented auth model:
-- Mobile auth for app users
-- Separate backoffice auth for admin panel users
-
-Auth rules:
-- Preserve separation between mobile auth and backoffice auth.
-- Do not merge tokens, roles, middleware, or session logic unless explicitly approved.
-- Respect existing role names found in code.
-
-### Admin and operations
-Documented features include:
-- Mobile admin screens
-- Web admin panel at `/admin`
-- AI provider hub
-- Pipeline execution and city management
-- KidScore and review analysis logic
-
-Rules:
-- Preserve role-based access control.
-- Be careful with admin features because they often affect operations data and permissions.
-- Do not simplify or bypass permission checks.
-
-## External integrations
-Documented integrations include:
-- Google Places
-- Foursquare
-- OpenAI via AI provider hub
-- Anthropic/Claude
-- Perplexity
-- Gemini
-- Neon PostgreSQL
-- Firebase Storage
-- GitHub as repository host
-- Optional SMTP/Nodemailer
-
-Rules:
-- Reuse existing integration points.
-- Do not hardcode secrets.
-- Do not change provider selection logic if a configurable AI provider hub already exists.
-
-## Development commands
-Use the commands defined in the repository if they still exist. Documented commands are:
-
-```bash
-npm run server:dev
-npm run expo:dev
-npm run db:push
-npm run lint
-npm run lint:fix
-npm run expo:static:build
-npm run server:build
-npm run server:prod
-```
-
-If these commands fail or no longer exist, inspect `package.json` and use the real commands from the codebase.
-
-## Change policy
-For every non-trivial task, follow this sequence:
-1. Inspect relevant files.
-2. Summarize current behavior.
-3. List planned file edits.
-4. Wait for approval if the change is structural, risky, or affects integrations.
-5. Implement the smallest viable change.
-6. Run `npm run lint` before declaring any task complete. Apply the Security Checklist in `CLAUDE.md` for tasks touching auth, routes, or schemas.
-7. Report what changed, any risks, and any follow-up needed.
-
-## What counts as a major change
-Ask for approval before:
-- Adding a new dependency
-- Changing database schema
-- Replacing a service or provider
-- Refactoring large files into many files
-- Changing auth flow
-- Changing navigation structure
-- Changing storage provider logic
-- Altering environment variable strategy
-- Changing API contracts used by app and backend
-
-## Output style
-When responding during development:
-- Be concise
-- Be explicit
-- Mention affected files
-- Mention assumptions
-- Flag uncertainty clearly
-- Prefer “I found X in code, but docs say Y” over guessing
-
-## Browser QA
-
-Playwright MCP is configured in `.mcp.json` (headless Chrome via `@playwright/mcp`) and is always available.
-
-Rules:
-- Read `TESTING_MAP.md` at the project root before running any flow. If it does not exist, create it and document the flows you execute.
-- Report errors with: affected screen, reproduction steps, and relevant console/network logs.
-- Do not declare a feature validated without running the corresponding flows.
+Continue development of KidSpot without disrupting existing architecture, conventions, or integrations.
 
 ## Priority order
-When deciding what to trust:
 1. Current codebase
-2. This `AGENTS.md`
+2. This file (`AGENTS.md`)
 3. `CLAUDE.md`
 4. Other repository documentation
 
-The Orchestration Rules defined in `CLAUDE.md` are additive — they extend this file, not override it.
+If docs and code diverge, follow the code and report the discrepancy explicitly.
 
-## Recommended first action for any new session
-Start by inspecting:
-- `package.json`
-- `app/`
-- `components/`
-- `lib/`
-- `server/`
-- `shared/schema.ts`
-- Any Firebase config files
-- Any DB connection config files
-- Any env example files
+## First actions — every new session
+Inspect before anything else:
+- `package.json`, `app/`, `components/`, `lib/`, `server/`, `shared/schema.ts`
+- Firebase config files, DB connection config, env example files
+- `graphify-out/GRAPH_REPORT.md` (or `graphify-out/wiki/index.md` if it exists)
 
-Then provide:
-- stack summary
-- architecture summary
-- likely outdated documentation notes
-- list of safe next steps
+Then provide: stack summary, architecture summary, outdated doc notes, safe next steps.
 
-## Instruction for migration from Claude Code
-This repository was previously developed with Claude Code guidance. Maintain continuity with existing conventions rather than introducing a “new preferred style” from another coding agent.
+## Before any code change
+1. Read this file and `CLAUDE.md` completely.
+2. Inspect the relevant codebase area.
+3. Summarize your understanding.
+4. State which files you intend to change and why.
+5. Wait for approval if the change is structural, risky, or affects integrations.
 
-Your job is to continue the same project cleanly, not reinterpret it from scratch.
+## Working style
+- Small, safe, incremental changes only.
+- Explain architectural or non-obvious decisions briefly.
+- For complex tasks, form an Agent Team per Orchestration Rules in `CLAUDE.md`.
+- After editing, summarize what changed, risks, and any follow-up needed.
+
+## Non-negotiable safety rules
+- Do not rename folders, move files in bulk, or reorganize architecture without approval.
+- Do not swap libraries or services without approval.
+- Do not modify environment variable names without approval.
+- Do not introduce parallel patterns when one already exists.
+- Do not create duplicate service layers, auth flows, API clients, or storage abstractions.
+- Do not edit files unrelated to the current task.
+
+## What requires approval
+- New dependency
+- Schema change
+- Service or provider replacement
+- Large-file refactoring
+- Auth flow change
+- Navigation structure change
+- Storage provider logic change
+- Environment variable strategy change
+- API contract change (app ↔ backend)
+
+## Current conventions to preserve
+
+### Frontend
+- `app/` → Expo Router screens; `components/` → reusable UI; `lib/` → utilities and API helpers
+- React Query for all server state; API access via `lib/api.ts` only
+- `AuthProvider` + AsyncStorage for auth; do not create new auth patterns
+- Admin mobile screens: `app/admin-*.tsx`
+
+### Backend
+- `server/index.ts` → Express setup; `server/routes.ts` → route definitions
+- `server/storage.ts` → repository layer; route handlers never query the DB directly
+- `server/auth.ts` → auth middleware
+- **Two-level routing rule** (see `CLAUDE.md` for full detail):
+  - Isolated endpoint → `server/routes.ts` + `server/storage.ts`
+  - 3+ related routes → `server/routes/[feature].ts`, mounted in `server/index.ts`
+- All route inputs validated with Zod at route boundary
+- New files: max 300 lines
+
+### Database
+- PostgreSQL + Drizzle ORM; Neon as host
+- Prefer `NEON_DATABASE_URL`; fall back to `DATABASE_URL` if already used in code
+- Inspect `shared/schema.ts` before any schema change; explain impact first
+- Preserve naming conventions already used by existing tables and columns
+
+### Auth
+- Two separate systems: mobile (`users` table) and backoffice (`backoffice_users`)
+- Do not merge tokens, roles, middleware, or session logic without approval
+
+### Storage
+- Firebase Storage is active; reuse existing helpers, bucket config, and naming conventions
+- Do not create a second storage approach without explicit approval
+
+### External integrations
+- Reuse existing integration points (Google Places, Foursquare, AI provider hub, Neon, Firebase, SMTP)
+- Do not hardcode secrets; do not bypass the configurable AI provider selection
+
+## Change workflow (non-trivial tasks)
+1. Inspect relevant files
+2. Summarize current behavior
+3. List planned edits
+4. Get approval if required
+5. Implement smallest viable change
+6. Run `npm run lint`; apply Security Checklist from `CLAUDE.md` for auth/routes/schema tasks
+7. Report: what changed, risks, follow-ups
+
+## Browser QA
+- Playwright MCP is configured in `.mcp.json` (always available)
+- Read `TESTING_MAP.md` before any flow; create it if missing
+- Report errors with: screen, reproduction steps, console/network logs
+- Do not declare a feature validated without running flows
+
+## Graphify
+- Read `graphify-out/GRAPH_REPORT.md` before answering architecture questions
+- After modifying code, run:
+  ```bash
+  python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"
+  ```
+
+## Output style
+- Be concise and explicit
+- Mention affected files and assumptions
+- Flag uncertainty as: "I found X in code, but docs say Y"
+- Do not guess; do not silently skip a discrepancy
+
+## Continuity note
+This project was developed with Claude Code. Preserve existing conventions — do not introduce a new house style without approval.

@@ -25,7 +25,11 @@
       "Bash(curl -s http://localhost:3000/api/health)",
       "Bash(grep -v \"^$\")",
       "Bash(kill 1717)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(python -c \"import graphify\")",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import sys; open\\('.graphify_python', 'w'\\).write\\(sys.executable\\)\")",
+      "Bash(python -c ':*)"
     ]
   }
 }
