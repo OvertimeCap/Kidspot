@@ -1697,9 +1697,11 @@ export type CuratedPlaceRow = {
   name: string | null;
   address: string | null;
   category: string | null;
+  place_type: "comer" | "parques" | null;
   kid_score: number | null;
   display_order: number | null;
   cover_photo_url: string | null;
+  cover_photo_reference: string | null;
   is_sponsored: boolean;
   family_highlight: string | null;
   lat: string;
@@ -1719,6 +1721,7 @@ export async function getPublishedPlacesByCity(cityId: string, placeType?: "come
       name: placeKidspotMeta.name,
       address: placeKidspotMeta.address,
       category: placeKidspotMeta.category,
+      place_type: placeKidspotMeta.place_type,
       kid_score: placeKidspotMeta.kid_score,
       display_order: placeKidspotMeta.display_order,
       ai_evidences: placeKidspotMeta.ai_evidences,
@@ -1735,7 +1738,12 @@ export async function getPublishedPlacesByCity(cityId: string, placeType?: "come
   const placeIds = rows.map((r) => r.place_id);
   const [allPhotos, sponsoredMap] = await Promise.all([
     db
-      .select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover })
+      .select({
+        place_id: placePhotos.place_id,
+        url: placePhotos.url,
+        photo_reference: placePhotos.photo_reference,
+        is_cover: placePhotos.is_cover,
+      })
       .from(placePhotos)
       .where(
         and(
@@ -1747,21 +1755,29 @@ export async function getPublishedPlacesByCity(cityId: string, placeType?: "come
     getActiveSponsoredPlaceIds(),
   ]);
 
-  const coverByPlace = new Map<string, string>();
+  const coverByPlace = new Map<string, { url: string | null; photo_reference: string | null }>();
   for (const p of allPhotos) {
-    if (!coverByPlace.has(p.place_id)) coverByPlace.set(p.place_id, p.url);
+    if (!coverByPlace.has(p.place_id)) {
+      coverByPlace.set(p.place_id, {
+        url: p.url,
+        photo_reference: p.photo_reference,
+      });
+    }
   }
 
   return rows.map((r) => {
     const evidences = Array.isArray(r.ai_evidences) ? (r.ai_evidences as string[]) : [];
+    const cover = coverByPlace.get(r.place_id);
     return {
       place_id: r.place_id,
       name: r.name,
       address: r.address,
       category: r.category,
+      place_type: r.place_type,
       kid_score: r.kid_score,
       display_order: r.display_order,
-      cover_photo_url: coverByPlace.get(r.place_id) ?? null,
+      cover_photo_url: cover?.url ?? null,
+      cover_photo_reference: cover?.photo_reference ?? null,
       is_sponsored: sponsoredMap.has(r.place_id),
       family_highlight: evidences[0] ?? null,
       lat: r.lat,
@@ -1843,6 +1859,7 @@ export async function getPublishedPlacesByCityAdmin(cityId: string): Promise<Pub
       name: placeKidspotMeta.name,
       address: placeKidspotMeta.address,
       category: placeKidspotMeta.category,
+      place_type: placeKidspotMeta.place_type,
       kid_score: placeKidspotMeta.kid_score,
       display_order: placeKidspotMeta.display_order,
       ai_evidences: placeKidspotMeta.ai_evidences,
@@ -1865,7 +1882,12 @@ export async function getPublishedPlacesByCityAdmin(cityId: string): Promise<Pub
   const placeIds = rows.map((r) => r.place_id);
   const [allPhotos, sponsoredMap] = await Promise.all([
     db
-      .select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover })
+      .select({
+        place_id: placePhotos.place_id,
+        url: placePhotos.url,
+        photo_reference: placePhotos.photo_reference,
+        is_cover: placePhotos.is_cover,
+      })
       .from(placePhotos)
       .where(
         and(
@@ -1877,21 +1899,29 @@ export async function getPublishedPlacesByCityAdmin(cityId: string): Promise<Pub
     getActiveSponsoredPlaceIds(),
   ]);
 
-  const coverByPlace = new Map<string, string>();
+  const coverByPlace = new Map<string, { url: string | null; photo_reference: string | null }>();
   for (const p of allPhotos) {
-    if (!coverByPlace.has(p.place_id)) coverByPlace.set(p.place_id, p.url);
+    if (!coverByPlace.has(p.place_id)) {
+      coverByPlace.set(p.place_id, {
+        url: p.url,
+        photo_reference: p.photo_reference,
+      });
+    }
   }
 
   return rows.map((r) => {
     const evidences = Array.isArray(r.ai_evidences) ? (r.ai_evidences as string[]) : [];
+    const cover = coverByPlace.get(r.place_id);
     return {
       place_id: r.place_id,
       name: r.name,
       address: r.address,
       category: r.category,
+      place_type: r.place_type,
       kid_score: r.kid_score,
       display_order: r.display_order,
-      cover_photo_url: coverByPlace.get(r.place_id) ?? null,
+      cover_photo_url: cover?.url ?? null,
+      cover_photo_reference: cover?.photo_reference ?? null,
       is_sponsored: sponsoredMap.has(r.place_id),
       family_highlight: evidences[0] ?? null,
       lat: r.lat,

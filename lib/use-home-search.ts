@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import * as Location from "expo-location";
-import { searchPlaces, haversineKm, type PlaceWithScore } from "@/lib/api";
+import { searchCuratedPlaces, haversineKm, type PlaceWithScore } from "@/lib/api";
 import { usePickedLocation } from "@/lib/picked-location-context";
 
 export type UserLocation = { lat: number; lng: number };
@@ -35,6 +35,7 @@ export interface HomeSearchState {
   searched: boolean;
   doSearch: (lat: number, lng: number, label?: string) => Promise<void>;
   handleSearchNearby: () => Promise<void>;
+  syncMapResults: (lat: number, lng: number, places: PlaceWithScore[], label?: string) => void;
 }
 
 export function useHomeSearch(): HomeSearchState {
@@ -65,25 +66,14 @@ export function useHomeSearch(): HomeSearchState {
       setError(null);
       setTypeFilter("Todos");
       try {
-        const places = await searchPlaces({
+        const { places, city_name } = await searchCuratedPlaces({
           latitude: lat,
           longitude: lng,
-          radius: 8000,
-          establishmentTypes: [
-            "park",
-            "playground",
-            "amusement_center",
-            "zoo",
-            "tourist_attraction",
-            "restaurant",
-            "cafe",
-          ],
-          sortBy: "kidScore",
         });
         setResults(places);
         setSearched(true);
         setUserLocation({ lat, lng });
-        if (label) setActiveLabel(label);
+        setActiveLabel(label ?? city_name ?? null);
       } catch {
         setError("Não foi possível buscar lugares. Tente novamente.");
       } finally {
@@ -115,6 +105,18 @@ export function useHomeSearch(): HomeSearchState {
     }
   }, [doSearch]);
 
+  const syncMapResults = useCallback(
+    (lat: number, lng: number, places: PlaceWithScore[], label?: string) => {
+      setResults(places);
+      setUserLocation({ lat, lng });
+      setSearched(true);
+      if (label !== undefined) {
+        setActiveLabel(label);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (didAutoSearch.current) return;
     didAutoSearch.current = true;
@@ -142,6 +144,7 @@ export function useHomeSearch(): HomeSearchState {
     searched,
     doSearch,
     handleSearchNearby,
+    syncMapResults,
   };
 }
 

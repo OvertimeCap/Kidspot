@@ -9,10 +9,13 @@ import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 import type { UserLocation, TypeFilter } from "@/lib/use-home-search";
+import type { PlaceWithScore } from "@/lib/api";
 
 interface Props {
   userLocation: UserLocation | null;
   typeFilter: TypeFilter;
+  places: PlaceWithScore[];
+  onResultsChange?: (lat: number, lng: number, places: PlaceWithScore[], label?: string) => void;
 }
 
 export default function MapViewScreen(_props: Props) {

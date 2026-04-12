@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,123 +12,241 @@ import useSupercluster from "use-supercluster";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
-import { searchPlaces, haversineKm, type PlaceWithScore } from "@/lib/api";
-import { radiusFromRegion, zoomFromRegion, boundsFromRegion } from "@/lib/map-utils";
+import { searchCuratedPlaces, haversineKm, type PlaceWithScore } from "@/lib/api";
+import { zoomFromRegion, boundsFromRegion, boundsObjectFromRegion } from "@/lib/map-utils";
 import { FOOD_TYPES, PARK_TYPES, type UserLocation, type TypeFilter } from "@/lib/use-home-search";
 import PlaceMarker from "./PlaceMarker";
 import MarkerCluster from "./MarkerCluster";
 import MiniCard from "./MiniCard";
 
-/**
- * Estilo do Google Maps que oculta TODOS os POIs nativos.
- *
- * Por que regras explícitas por subtipo?
- * No Styled Maps, regras mais específicas do Google (poi.government, poi.medical,
- * poi.place_of_worship…) têm precedência sobre a regra genérica "poi" quando
- * elementType não é declarado.  Declarar `elementType: "all"` em cada subtipo
- * garante que ícone + label + geometria de marcador sejam escondidos,
- * independente de qual regra o Google considere mais específica.
- *
- * O que fica visível: ruas, bairros, água, fronteiras administrativas.
- * O que some: todas lojas, governo, saúde, culto, escola, esporte,
- *             parques (somente label/ícone — geometria verde permanece),
- *             transit (ônibus, metrô, trem, aeroporto).
- */
 const MAP_STYLE = [
-  // ── Regra de cobertura máxima (poi + elementType all) ────────────────────
-  { featureType: "poi",                  elementType: "all",    stylers: [{ visibility: "off" }] },
-  // ── Subtipos explícitos (sobrepõem qualquer default do Google) ───────────
-  { featureType: "poi.attraction",       elementType: "all",    stylers: [{ visibility: "off" }] },
-  { featureType: "poi.business",         elementType: "all",    stylers: [{ visibility: "off" }] },
-  { featureType: "poi.government",       elementType: "all",    stylers: [{ visibility: "off" }] },
-  { featureType: "poi.medical",          elementType: "all",    stylers: [{ visibility: "off" }] },
-  // poi.park: oculta label/ícone mas mantém geometria verde (referência geográfica útil)
-  { featureType: "poi.park",             elementType: "labels", stylers: [{ visibility: "off" }] },
-  { featureType: "poi.place_of_worship", elementType: "all",    stylers: [{ visibility: "off" }] },
-  { featureType: "poi.school",           elementType: "all",    stylers: [{ visibility: "off" }] },
-  { featureType: "poi.sports_complex",   elementType: "all",    stylers: [{ visibility: "off" }] },
-  // ── Transit (metrô, ônibus, trem, aeroporto) ─────────────────────────────
-  { featureType: "transit",              elementType: "all",    stylers: [{ visibility: "off" }] },
-  { featureType: "transit.line",         elementType: "all",    stylers: [{ visibility: "off" }] },
-  { featureType: "transit.station",      elementType: "all",    stylers: [{ visibility: "off" }] },
+  { featureType: "poi", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "poi", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+  { featureType: "poi", elementType: "labels.text", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.attraction", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.business", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.government", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.medical", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.place_of_worship", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.school", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.sports_complex", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.park", elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "transit", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "transit.line", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "transit.station", elementType: "all", stylers: [{ visibility: "off" }] },
   { featureType: "transit.station.airport", elementType: "all", stylers: [{ visibility: "off" }] },
-  { featureType: "transit.station.bus",     elementType: "all", stylers: [{ visibility: "off" }] },
-  { featureType: "transit.station.rail",    elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "transit.station.bus", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "transit.station.rail", elementType: "all", stylers: [{ visibility: "off" }] },
 ];
 
 interface Props {
   userLocation: UserLocation | null;
   typeFilter: TypeFilter;
+  places: PlaceWithScore[];
+  onResultsChange?: (lat: number, lng: number, places: PlaceWithScore[], label?: string) => void;
 }
 
-const DEFAULT_LAT = -23.5505; // São Paulo (fallback)
+const DEFAULT_LAT = -23.5505;
 const DEFAULT_LNG = -46.6333;
+const GOOGLE_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAP_ID?.trim() || undefined;
 
-export default function MapViewScreen({ userLocation, typeFilter }: Props) {
-  const mapRef = useRef<MapView>(null);
+function isFiniteRegion(region: Region): boolean {
+  return (
+    Number.isFinite(region.latitude) &&
+    Number.isFinite(region.longitude) &&
+    Number.isFinite(region.latitudeDelta) &&
+    Number.isFinite(region.longitudeDelta) &&
+    region.latitudeDelta > 0 &&
+    region.longitudeDelta > 0
+  );
+}
 
-  const initialRegion: Region = {
-    latitude: userLocation?.lat ?? DEFAULT_LAT,
-    longitude: userLocation?.lng ?? DEFAULT_LNG,
-    latitudeDelta: 0.05,
-    longitudeDelta: 0.05,
+function sanitizePlaces(places: PlaceWithScore[]): PlaceWithScore[] {
+  return places.filter((place) =>
+    Number.isFinite(place.location.lat) && Number.isFinite(place.location.lng),
+  );
+}
+
+function getRegionForPlaces(places: PlaceWithScore[]): Region | null {
+  const coordinates = sanitizePlaces(places).map((place) => ({
+    latitude: place.location.lat,
+    longitude: place.location.lng,
+  }));
+
+  if (coordinates.length === 0) return null;
+
+  if (coordinates.length === 1) {
+    return {
+      latitude: coordinates[0].latitude,
+      longitude: coordinates[0].longitude,
+      latitudeDelta: 0.03,
+      longitudeDelta: 0.03,
+    };
+  }
+
+  const latitudes = coordinates.map((coord) => coord.latitude);
+  const longitudes = coordinates.map((coord) => coord.longitude);
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const minLng = Math.min(...longitudes);
+  const maxLng = Math.max(...longitudes);
+
+  return {
+    latitude: (minLat + maxLat) / 2,
+    longitude: (minLng + maxLng) / 2,
+    latitudeDelta: Math.max((maxLat - minLat) * 1.5, 0.03),
+    longitudeDelta: Math.max((maxLng - minLng) * 1.35, 0.03),
   };
+}
 
-  const [mapResults, setMapResults] = useState<PlaceWithScore[]>([]);
-  const [selectedPlace, setSelectedPlace] = useState<PlaceWithScore | null>(null);
-  const [mapLoading, setMapLoading] = useState(false);
-  const [currentRegion, setCurrentRegion] = useState<Region>(initialRegion);
-  // Controla visibilidade do botão "Buscar nesta área"
-  const [pendingSearch, setPendingSearch] = useState(false);
+function focusMapOnPlaces(
+  mapRef: React.RefObject<MapView | null>,
+  places: PlaceWithScore[],
+): Region | null {
+  const region = getRegionForPlaces(places);
+  if (!region || !mapRef.current) return region;
+  mapRef.current.animateToRegion(region, 350);
+  return region;
+}
 
+export default function MapViewScreen({
+  userLocation,
+  typeFilter,
+  places,
+  onResultsChange,
+}: Props) {
+  const mapRef = useRef<MapView>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSearchCenter = useRef<{ lat: number; lng: number } | null>(null);
+  const suppressNextPlacesFit = useRef(false);
 
-  // Busca locais usando o mesmo pipeline KidScore que a lista
+  const sanitizedIncomingPlaces = useMemo(() => sanitizePlaces(places), [places]);
+  const initialRegion: Region = useMemo(
+    () =>
+      getRegionForPlaces(sanitizedIncomingPlaces) ?? {
+        latitude: userLocation?.lat ?? DEFAULT_LAT,
+        longitude: userLocation?.lng ?? DEFAULT_LNG,
+        latitudeDelta: 0.05,
+        longitudeDelta: 0.05,
+      },
+    [sanitizedIncomingPlaces, userLocation],
+  );
+
+  const [mapResults, setMapResults] = useState<PlaceWithScore[]>(sanitizedIncomingPlaces);
+  const [selectedPlace, setSelectedPlace] = useState<PlaceWithScore | null>(null);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [currentRegion, setCurrentRegion] = useState<Region>(initialRegion);
+  const [pendingSearch, setPendingSearch] = useState(false);
+
   const fetchForRegion = useCallback(async (region: Region) => {
+    if (!isFiniteRegion(region)) return null;
+
     setMapLoading(true);
     try {
-      const places = await searchPlaces({
+      const { places: nextPlaces } = await searchCuratedPlaces({
         latitude: region.latitude,
         longitude: region.longitude,
-        radius: radiusFromRegion(region),
-        establishmentTypes: [
-          "park",
-          "playground",
-          "amusement_center",
-          "zoo",
-          "tourist_attraction",
-          "restaurant",
-          "cafe",
-        ],
-        sortBy: "kidScore",
+        bounds: boundsObjectFromRegion(region),
       });
-      setMapResults(places);
+      const sanitizedPlaces = sanitizePlaces(nextPlaces);
+      setMapResults(sanitizedPlaces);
+      return sanitizedPlaces;
     } catch {
-      // Falha silenciosa no mapa — o usuário pode tentar novamente
+      return null;
     } finally {
       setMapLoading(false);
     }
   }, []);
 
-  // Busca inicial ao montar o componente
-  React.useEffect(() => {
-    fetchForRegion(initialRegion);
+  useEffect(() => {
+    setMapResults(sanitizedIncomingPlaces);
+    setSelectedPlace((currentSelectedPlace) =>
+      currentSelectedPlace &&
+      sanitizedIncomingPlaces.some((place) => place.place_id === currentSelectedPlace.place_id)
+        ? currentSelectedPlace
+        : null,
+    );
+
+    const targetRegion = getRegionForPlaces(sanitizedIncomingPlaces);
+    if (targetRegion) {
+      setCurrentRegion(targetRegion);
+    }
+
+    if (!mapReady || suppressNextPlacesFit.current || sanitizedIncomingPlaces.length === 0) {
+      suppressNextPlacesFit.current = false;
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const fittedRegion = focusMapOnPlaces(mapRef, sanitizedIncomingPlaces);
+      if (fittedRegion) {
+        setCurrentRegion(fittedRegion);
+      }
+    }, 180);
+
+    return () => clearTimeout(timer);
+  }, [mapReady, sanitizedIncomingPlaces]);
+
+  useEffect(() => {
     if (userLocation) {
       lastSearchCenter.current = userLocation;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userLocation]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    };
   }, []);
 
-  // Ao mover o mapa: não busca automaticamente.
-  // Exibe o botão "Buscar nesta área" quando a deriva for ≥ 200m.
-  function handleRegionChange(region: Region) {
+  const visiblePlaces = useMemo(() => {
+    if (typeFilter === "Restaurantes") {
+      return mapResults.filter((place) =>
+        place.types.some((type) => FOOD_TYPES.has(type)),
+      );
+    }
+    if (typeFilter === "Parques") {
+      return mapResults.filter((place) =>
+        place.types.some((type) => PARK_TYPES.has(type)),
+      );
+    }
+    return mapResults;
+  }, [mapResults, typeFilter]);
+
+  const points = useMemo(
+    () =>
+      visiblePlaces.map((place) => ({
+        type: "Feature" as const,
+        properties: { cluster: false as const, place },
+        geometry: {
+          type: "Point" as const,
+          coordinates: [place.location.lng, place.location.lat] as [number, number],
+        },
+      })),
+    [visiblePlaces],
+  );
+
+  const { clusters, supercluster } = useSupercluster({
+    points,
+    bounds: boundsFromRegion(currentRegion),
+    zoom: zoomFromRegion(currentRegion),
+    options: { radius: 60, maxZoom: 17 },
+  });
+
+  function handleRegionChange(region: Region, details?: { isGesture?: boolean }) {
+    if (!isFiniteRegion(region)) return;
+
     setCurrentRegion(region);
+
+    if (details && !details.isGesture) return;
 
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
 
     debounceTimer.current = setTimeout(() => {
-      // Guard: ignora micro-variações de animação (< 200m)
       if (lastSearchCenter.current) {
         const drift = haversineKm(
           lastSearchCenter.current.lat,
@@ -142,64 +260,47 @@ export default function MapViewScreen({ userLocation, typeFilter }: Props) {
     }, 600);
   }
 
-  // Chamado pelo botão "Buscar nesta área"
-  function handleSearchHere() {
+  async function handleSearchHere() {
+    if (!isFiniteRegion(currentRegion)) return;
+
     lastSearchCenter.current = {
       lat: currentRegion.latitude,
       lng: currentRegion.longitude,
     };
     setPendingSearch(false);
     setSelectedPlace(null);
-    fetchForRegion(currentRegion);
+
+    const nextPlaces = await fetchForRegion(currentRegion);
+    if (nextPlaces) {
+      suppressNextPlacesFit.current = true;
+      onResultsChange?.(
+        currentRegion.latitude,
+        currentRegion.longitude,
+        nextPlaces,
+        "Area do mapa",
+      );
+    }
   }
-
-  // Filtragem client-side dos resultados pelo filtro de tipo ativo
-  const visiblePlaces = mapResults.filter((p) => {
-    if (typeFilter === "Restaurantes") return p.types.some((t) => FOOD_TYPES.has(t));
-    if (typeFilter === "Parques") return p.types.some((t) => PARK_TYPES.has(t));
-    return true;
-  });
-
-  // Pontos GeoJSON para use-supercluster
-  const points = visiblePlaces.map((p) => ({
-    type: "Feature" as const,
-    properties: { cluster: false as const, place: p },
-    geometry: {
-      type: "Point" as const,
-      // GeoJSON: [longitude, latitude] — ordem invertida em relação ao React Native Maps
-      coordinates: [p.location.lng, p.location.lat] as [number, number],
-    },
-  }));
-
-  const { clusters, supercluster } = useSupercluster({
-    points,
-    // ATENÇÃO: bounds espera [westLng, southLat, eastLng, northLat]
-    bounds: boundsFromRegion(currentRegion),
-    zoom: zoomFromRegion(currentRegion),
-    options: { radius: 60, maxZoom: 17 },
-  });
 
   return (
     <View style={styles.container}>
       <MapView
         ref={mapRef}
-        // PROVIDER_GOOGLE usa Google Maps no Android.
-        // No iOS Expo Go não suporta PROVIDER_GOOGLE → usa Apple Maps como fallback.
-        // Em development build no iOS, PROVIDER_GOOGLE funciona normalmente.
         provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
         style={styles.map}
         initialRegion={initialRegion}
-        showsUserLocation={true}        // Blue Dot nativo
-        showsMyLocationButton={false}   // botão padrão suprimido
-        // CRÍTICO: "LEGACY" é obrigatório para customMapStyle funcionar.
-        // O renderer "LATEST" (padrão em react-native-maps 1.14+) usa o Google Maps
-        // SDK 18.0+ que descontinuou setMapStyle() / MapStyleOptions.
-        // Com LATEST, customMapStyle é silenciosamente ignorado e POIs aparecem.
-        // Com LEGACY, setMapStyle() funciona e o JSON de estilo é aplicado.
-        googleRenderer="LEGACY"
-        // Aplica em Android (PROVIDER_GOOGLE) e iOS dev build.
-        // Apple Maps (iOS Expo Go) ignora silenciosamente — sem erro.
-        customMapStyle={MAP_STYLE}
+        showsUserLocation={true}
+        showsMyLocationButton={false}
+        moveOnMarkerPress={false}
+        poiClickEnabled={false}
+        showsPointsOfInterest={false}
+        showsBuildings={false}
+        showsIndoors={false}
+        toolbarEnabled={false}
+        googleRenderer="LATEST"
+        googleMapId={GOOGLE_MAP_ID}
+        customMapStyle={GOOGLE_MAP_ID ? undefined : MAP_STYLE}
+        onMapReady={() => setMapReady(true)}
         onRegionChangeComplete={handleRegionChange}
         onPress={() => setSelectedPlace(null)}
       >
@@ -208,13 +309,14 @@ export default function MapViewScreen({ userLocation, typeFilter }: Props) {
             if (!supercluster) return null;
             return (
               <MarkerCluster
-                key={`cluster-${cluster.id}`}
+                key={`cluster-${cluster.id ?? cluster.properties.cluster_id}`}
                 cluster={cluster as Parameters<typeof MarkerCluster>[0]["cluster"]}
                 supercluster={supercluster}
                 mapRef={mapRef}
               />
             );
           }
+
           const place = (cluster.properties as { place: PlaceWithScore }).place;
           return (
             <PlaceMarker
@@ -226,7 +328,6 @@ export default function MapViewScreen({ userLocation, typeFilter }: Props) {
         })}
       </MapView>
 
-      {/* Botão "Buscar nesta área" — aparece após pan/zoom ≥ 200m */}
       {pendingSearch && !mapLoading && (
         <Pressable
           style={({ pressed }) => [
@@ -236,11 +337,10 @@ export default function MapViewScreen({ userLocation, typeFilter }: Props) {
           onPress={handleSearchHere}
         >
           <Ionicons name="search" size={15} color="#fff" />
-          <Text style={styles.searchHereBtnText}>Buscar nesta área</Text>
+          <Text style={styles.searchHereBtnText}>Buscar nesta area</Text>
         </Pressable>
       )}
 
-      {/* Indicador de loading ao re-buscar */}
       {mapLoading && (
         <ActivityIndicator
           style={styles.loadingOverlay}
@@ -249,7 +349,6 @@ export default function MapViewScreen({ userLocation, typeFilter }: Props) {
         />
       )}
 
-      {/* Mini-card deslizante — sempre montado, animado internamente */}
       <MiniCard
         place={selectedPlace}
         onDismiss={() => setSelectedPlace(null)}

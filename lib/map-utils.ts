@@ -61,3 +61,13 @@ export function boundsFromRegion(
     latitude + halfLat,  // northLat
   ];
 }
+
+export function boundsObjectFromRegion(region: Region): {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+} {
+  const [west, south, east, north] = boundsFromRegion(region);
+  return { north, south, east, west };
+}

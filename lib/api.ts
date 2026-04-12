@@ -8,7 +8,12 @@ export type MinimalPlace = {
   types: string[];
   rating?: number;
   user_ratings_total?: number;
-  photos?: { photo_reference: string }[];
+  photos?: PlaceImage[];
+};
+
+export type PlaceImage = {
+  photo_reference?: string | null;
+  url?: string | null;
 };
 
 export type PlaceDetails = MinimalPlace & {
@@ -90,12 +95,15 @@ export type PlaceWithScore = {
   user_ratings_total?: number;
   types: string[];
   opening_hours?: { open_now?: boolean; weekday_text?: string[] };
-  photos?: { photo_reference: string }[];
+  photos?: PlaceImage[];
   kid_score: number;
   kid_score_breakdown: KidScoreBreakdown;
   distance_meters?: number;
   family_highlight?: string;
   is_sponsored?: boolean;
+  category_label?: string;
+  place_type?: "comer" | "parques";
+  display_order?: number | null;
 };
 
 export function getPhotoUrl(photoReference: string, maxwidth = 400): string {
@@ -106,10 +114,49 @@ export function getPhotoUrl(photoReference: string, maxwidth = 400): string {
   return url.toString();
 }
 
+export function resolvePlaceImageUrl(
+  photo: PlaceImage | null | undefined,
+  maxwidth = 400,
+): string | null {
+  if (!photo) return null;
+  if (photo.photo_reference) {
+    return getPhotoUrl(photo.photo_reference, maxwidth);
+  }
+  return photo.url ?? null;
+}
+
 export async function searchPlaces(params: SearchParams): Promise<PlaceWithScore[]> {
   const res = await apiRequest("POST", "/api/places/search", params);
   const data = await res.json();
   return data.places ?? [];
+}
+
+export type CuratedSearchParams = {
+  latitude: number;
+  longitude: number;
+  radius?: number;
+  bounds?: {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  };
+};
+
+export async function searchCuratedPlaces(
+  params: CuratedSearchParams,
+): Promise<{
+  places: PlaceWithScore[];
+  city_id: string | null;
+  city_name: string | null;
+}> {
+  const res = await apiRequest("POST", "/api/cities/places/search", params);
+  const data = await res.json();
+  return {
+    places: data.places ?? [],
+    city_id: data.city_id ?? null,
+    city_name: data.city_name ?? null,
+  };
 }
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
@@ -351,9 +398,11 @@ export type CuratedPlace = {
   name: string | null;
   address: string | null;
   category: string | null;
+  place_type: "comer" | "parques" | null;
   kid_score: number | null;
   display_order: number | null;
   cover_photo_url: string | null;
+  cover_photo_reference: string | null;
   is_sponsored: boolean;
   family_highlight: string | null;
   lat: string;

@@ -10,7 +10,7 @@ import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
-import { getBestType, getPhotoUrl, type PlaceWithScore } from "@/lib/api";
+import { getBestType, resolvePlaceImageUrl, type PlaceWithScore } from "@/lib/api";
 
 interface Props {
   place: PlaceWithScore | null;
@@ -25,7 +25,6 @@ export default function MiniCard({ place, onDismiss, onNavigate }: Props) {
   useEffect(() => {
     Animated.spring(slideAnim, {
       toValue: place ? 0 : 180,
-      // useNativeDriver: true executa a animação na UI thread (sem passar pelo bridge JS)
       useNativeDriver: true,
       tension: 100,
       friction: 12,
@@ -34,10 +33,10 @@ export default function MiniCard({ place, onDismiss, onNavigate }: Props) {
 
   const photoUrl =
     place?.photos && place.photos.length > 0
-      ? getPhotoUrl(place.photos[0].photo_reference, 200)
+      ? resolvePlaceImageUrl(place.photos[0], 200)
       : null;
 
-  const category = place ? getBestType(place.types) : "";
+  const category = place ? place.category_label ?? getBestType(place.types) : "";
 
   return (
     <Animated.View
@@ -46,16 +45,12 @@ export default function MiniCard({ place, onDismiss, onNavigate }: Props) {
         { paddingBottom: insets.bottom + 12 },
         { transform: [{ translateY: slideAnim }] },
       ]}
-      // "box-none" quando visível: a View não captura toques, mas os filhos (Pressable) sim.
-      // "none" quando escondido: nenhum toque interceptado, marcadores abaixo recebem o evento.
       pointerEvents={place ? "box-none" : "none"}
-      onStartShouldSetResponder={() => true}
     >
       <Pressable
         style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
         onPress={onNavigate}
       >
-        {/* Foto */}
         <View style={styles.photoContainer}>
           {photoUrl ? (
             <Image
@@ -70,7 +65,6 @@ export default function MiniCard({ place, onDismiss, onNavigate }: Props) {
           )}
         </View>
 
-        {/* Informações */}
         <View style={styles.info}>
           <Text style={styles.name} numberOfLines={1}>
             {place?.name ?? ""}
@@ -88,12 +82,11 @@ export default function MiniCard({ place, onDismiss, onNavigate }: Props) {
               </>
             )}
             <Text style={styles.kidScore}>
-              KidScore {place?.kid_score ?? "—"}
+              KidScore {place?.kid_score ?? "-"}
             </Text>
           </View>
         </View>
 
-        {/* Seta de navegação */}
         <Ionicons
           name="chevron-forward"
           size={20}
@@ -102,7 +95,6 @@ export default function MiniCard({ place, onDismiss, onNavigate }: Props) {
         />
       </Pressable>
 
-      {/* Botão fechar */}
       <Pressable style={styles.closeBtn} onPress={onDismiss} hitSlop={8}>
         <Ionicons name="close-circle" size={22} color={Colors.textLight ?? "#999"} />
       </Pressable>

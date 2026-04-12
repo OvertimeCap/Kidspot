@@ -9,6 +9,13 @@
         "--headless",
         "--browser=chrome"
       ]
+    },
+    "google-maps-platform-code-assist": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@googlemaps/code-assist-mcp@latest"
+      ]
     }
   }
 }

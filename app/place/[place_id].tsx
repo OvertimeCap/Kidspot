@@ -294,11 +294,13 @@ export default function PlaceDetailsScreen() {
     ? [...dbPhotos].sort((a, b) => (b.is_cover ? 1 : 0) - (a.is_cover ? 1 : 0) || a.order - b.order)
     : [];
 
-  const googlePhotos = (place.photos ?? []).slice(0, Math.max(0, 8 - sortedDbPhotos.length));
+  const googlePhotos = (place.photos ?? [])
+    .filter((p) => !!p.photo_reference)
+    .slice(0, Math.max(0, 8 - sortedDbPhotos.length));
 
   const galleryPhotos: string[] = [
     ...sortedDbPhotos.map((p) => resolvePhotoUrl(p, 800)),
-    ...googlePhotos.map((p) => getPhotoUrl(p.photo_reference, 800)),
+    ...googlePhotos.map((p) => getPhotoUrl(p.photo_reference!, 800)),
   ];
 
   const kidsAreaPhotos = sortedDbPhotos.filter((p) => p.is_kids_area).slice(0, 2);

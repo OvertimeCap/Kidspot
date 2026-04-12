@@ -17,12 +17,12 @@ import {
   getBestType,
   haversineKm,
   formatDistance,
-  getPhotoUrl,
+  resolvePlaceImageUrl,
   type PlaceWithScore,
 } from "@/lib/api";
 import { useHomeSearch, type UserLocation, type TypeFilter } from "@/lib/use-home-search";
 import StoriesRow, { type PlacePhotoMap } from "@/components/StoriesRow";
-import MapViewScreen from "@/components/map/MapViewScreen";
+import MapViewScreen from "../../components/map/MapViewScreen";
 
 function PlaceCard({
   place,
@@ -33,7 +33,7 @@ function PlaceCard({
 }) {
   const photoUrl =
     place.photos && place.photos.length > 0
-      ? getPhotoUrl(place.photos[0].photo_reference, 600)
+      ? resolvePlaceImageUrl(place.photos[0], 600)
       : null;
 
   const distanceText =
@@ -48,7 +48,7 @@ function PlaceCard({
         )
       : null;
 
-  const category = getBestType(place.types);
+  const category = place.category_label ?? getBestType(place.types);
 
   return (
     <Pressable
@@ -127,8 +127,9 @@ export default function HomeScreen() {
   const placePhotoRefs = useMemo<PlacePhotoMap>(() => {
     const map: PlacePhotoMap = {};
     for (const p of search.results) {
-      if (p.photos && p.photos.length > 0) {
-        map[p.place_id] = p.photos[0].photo_reference;
+      const photoRef = p.photos?.[0]?.photo_reference;
+      if (photoRef) {
+        map[p.place_id] = photoRef;
       }
     }
     return map;
@@ -180,6 +181,8 @@ export default function HomeScreen() {
         <MapViewScreen
           userLocation={search.userLocation}
           typeFilter={search.typeFilter}
+          places={search.filteredResults}
+          onResultsChange={search.syncMapResults}
         />
       ) : (
         <>
