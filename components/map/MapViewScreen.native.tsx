@@ -118,8 +118,18 @@ export default function MapViewScreen({
 }: Props) {
   const mapRef = useRef<MapView>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clusterDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRegionRef = useRef<Region>(
+    getRegionForPlaces(sanitizePlaces(places)) ?? {
+      latitude: DEFAULT_LAT,
+      longitude: DEFAULT_LNG,
+      latitudeDelta: 0.05,
+      longitudeDelta: 0.05,
+    },
+  );
   const lastSearchCenter = useRef<{ lat: number; lng: number } | null>(null);
   const suppressNextPlacesFit = useRef(false);
+  const markerPressedRef = useRef(false);
 
   const sanitizedIncomingPlaces = useMemo(() => sanitizePlaces(places), [places]);
   const initialRegion: Region = useMemo(
@@ -197,9 +207,8 @@ export default function MapViewScreen({
 
   useEffect(() => {
     return () => {
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-      }
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      if (clusterDebounce.current) clearTimeout(clusterDebounce.current);
     };
   }, []);
 
@@ -240,7 +249,14 @@ export default function MapViewScreen({
   function handleRegionChange(region: Region, details?: { isGesture?: boolean }) {
     if (!isFiniteRegion(region)) return;
 
-    setCurrentRegion(region);
+    // Armazena a region mais recente sem causar re-render imediato.
+    // O state (que alimenta o supercluster) só é atualizado após 150ms de pausa,
+    // evitando recálculos excessivos durante pinch-zoom contínuo.
+    pendingRegionRef.current = region;
+    if (clusterDebounce.current) clearTimeout(clusterDebounce.current);
+    clusterDebounce.current = setTimeout(() => {
+      setCurrentRegion(pendingRegionRef.current);
+    }, 150);
 
     if (details && !details.isGesture) return;
 
@@ -259,6 +275,11 @@ export default function MapViewScreen({
       setPendingSearch(true);
     }, 600);
   }
+
+  const handleMarkerPress = useCallback((place: PlaceWithScore) => {
+    markerPressedRef.current = true;
+    setSelectedPlace(place);
+  }, []);
 
   async function handleSearchHere() {
     if (!isFiniteRegion(currentRegion)) return;
@@ -302,7 +323,13 @@ export default function MapViewScreen({
         customMapStyle={GOOGLE_MAP_ID ? undefined : MAP_STYLE}
         onMapReady={() => setMapReady(true)}
         onRegionChangeComplete={handleRegionChange}
-        onPress={() => setSelectedPlace(null)}
+        onPress={() => {
+          if (markerPressedRef.current) {
+            markerPressedRef.current = false;
+            return;
+          }
+          setSelectedPlace(null);
+        }}
       >
         {clusters.map((cluster) => {
           if (cluster.properties.cluster) {
@@ -322,7 +349,7 @@ export default function MapViewScreen({
             <PlaceMarker
               key={place.place_id}
               place={place}
-              onPress={setSelectedPlace}
+              onPress={handleMarkerPress}
             />
           );
         })}

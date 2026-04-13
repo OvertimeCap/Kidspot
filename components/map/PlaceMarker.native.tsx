@@ -20,7 +20,7 @@ export default function PlaceMarker({ place, onPress }: Props) {
     <Marker
       coordinate={coordinate}
       pinColor={Platform.OS === "android" ? Colors.primary : undefined}
-      tracksViewChanges={Platform.OS !== "android"}
+      tracksViewChanges={false}
       onPress={() => onPress(place)}
     >
       {Platform.OS !== "android" && (

@@ -288,7 +288,21 @@ router.post("/api/cities/places/search", async (req: AuthRequest, res: Response)
     const { latitude, longitude, radius, bounds } = parsed.data;
     const result = await checkCityByCoords(latitude, longitude);
 
-    if (!result || !result.enabled) {
+    if (!result) {
+      res.json({ city_id: null, city_name: null, places: [] });
+      return;
+    }
+
+    // Se bounds foi enviado, verifica se o centro da cidade está dentro do viewport —
+    // isso garante que ao navegar além do raio central a cidade ainda seja carregada
+    // enquanto estiver visível no mapa. Sem bounds, mantém a lógica original de raio.
+    const cityLat = parseFloat(result.city.latitude);
+    const cityLng = parseFloat(result.city.longitude);
+    const cityInView = bounds
+      ? isWithinBounds(cityLat, cityLng, bounds)
+      : result.enabled;
+
+    if (!cityInView) {
       res.json({ city_id: null, city_name: null, places: [] });
       return;
     }
