@@ -7,29 +7,16 @@
       "Bash(claude remote-control:*)",
       "Bash(node:*)",
       "Bash(npx tsx:*)",
-      "Bash(grep -v \"Warning\\\\|SECURITY\\\\|pg-connection\\\\|next major\\\\|sslmode\\\\|uselibpq\\\\|See https\\\\|Use \\\\`node\")",
-      "Bash(curl -s -X POST http://localhost:5000/api/backoffice/auth/login -H \"Content-Type: application/json\" -d \"{\\\\\"email\\\\\":\\\\\"kidspotbrasil@gmail.com\\\\\",\\\\\"password\\\\\":\\\\\"102030\\\\\"}\")",
       "Bash(npm run:*)",
-      "Bash(echo \"Backend PID: $!\")",
-      "Bash(echo \"PID: $!\")",
-      "Bash(EXPO_PUBLIC_DOMAIN=localhost:5000 npx expo start)",
-      "Bash(echo \"Expo PID: $!\")",
-      "Bash(curl -s http://localhost:5000/api/places?city_id=1)",
-      "Bash(curl -s http://localhost:8081)",
+      "Bash(EXPO_PUBLIC_DOMAIN=* npx expo start)",
       "Bash(netstat -ano)",
       "Bash(taskkill:*)",
       "Bash(cmd:*)",
       "Bash(powershell:*)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/api/admin/users -X POST -H \"Content-Type: application/json\" -d '{\"name\":\"Test\",\"email\":\"test@test.com\",\"password\":\"123456\",\"role\":\"usuario\"}')",
-      "Read(//tmp/**)",
-      "Bash(curl -s http://localhost:3000/api/health)",
-      "Bash(grep -v \"^$\")",
-      "Bash(kill 1717)",
       "Bash(curl:*)",
       "Bash(python -c \"import graphify\")",
       "Bash(pip install:*)",
-      "Bash(python -c \"import sys; open\\('.graphify_python', 'w'\\).write\\(sys.executable\\)\")",
-      "Bash(python -c ':*)"
+      "Read(//tmp/**)"
     ]
   }
 }

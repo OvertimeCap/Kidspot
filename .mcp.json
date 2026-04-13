@@ -11,8 +11,10 @@
       ]
     },
     "google-maps-platform-code-assist": {
-      "command": "npx",
+      "command": "cmd",
       "args": [
+        "/c",
+        "npx",
         "-y",
         "@googlemaps/code-assist-mcp@latest"
       ]

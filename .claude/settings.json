@@ -4,5 +4,14 @@
       "command": "npx",
       "args": ["@playwright/mcp@latest"]
     }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist)",
+      "Bash(grep '\\\\.ts$')",
+      "Bash(xargs grep:*)"
+    ]
   }
 }

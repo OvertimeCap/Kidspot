@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "name": "Kidspot",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "claudeCode.allowDangerouslySkipPermissions": true,
+    "window.restoreWindows": "all",
+    "workbench.startupEditor": "none"
+  }
+}
