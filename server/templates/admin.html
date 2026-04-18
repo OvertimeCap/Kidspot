@@ -2020,17 +2020,32 @@
       async function renderPrompts() {
         pageContent.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
 
+        const safeJson = async (res) => {
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('json')) throw new Error(`Servidor retornou resposta inválida (HTTP ${res.status})`);
+          return res.json();
+        };
+
         try {
-          const res  = await apiFetch('/admin/ai-prompts/active');
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Erro');
-          renderPromptsUI(data.prompt);
+          const [activeRes, familyRes] = await Promise.all([
+            apiFetch('/admin/ai-prompts/active'),
+            apiFetch('/admin/ai-prompts/family-summary'),
+          ]);
+          if (!activeRes.ok) {
+            const d = await safeJson(activeRes).catch(() => ({}));
+            throw new Error(d.error || `Erro ao carregar prompt (HTTP ${activeRes.status})`);
+          }
+          const activeData = await safeJson(activeRes);
+          const familyData = familyRes.ok
+            ? await safeJson(familyRes).catch(() => ({ prompt: null }))
+            : { prompt: null };
+          renderPromptsUI(activeData.prompt, familyData.prompt);
         } catch(e) {
           pageContent.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Erro: ${escHtml(e.message)}</p></div>`;
         }
       }
 
-      function renderPromptsUI(prompt) {
+      function renderPromptsUI(prompt, familyPrompt) {
         const isAdmin = adminUser?.role === 'admin';
         const currentText = promptDraft !== null ? promptDraft : (prompt?.prompt || '');
 
@@ -2059,6 +2074,19 @@
                 <button class="btn btn-orange" id="save-prompt-inline" ${promptDraft === null || promptDraft === (prompt?.prompt||'')?'disabled':''}>💾 Salvar Prompt</button>
               </div>
             ` : ''}
+          </div>
+
+          <div class="card" style="margin-bottom:20px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font-size:18px">🌿</span>
+              <strong style="font-size:16px">Prompt — Resumo para Famílias</strong>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Este prompt é usado ao clicar em "Gerar com IA" na fila de curadoria. Editar e gerar um resumo no card também atualiza este valor.</p>
+            <textarea class="field-input" id="family-prompt-editor" rows="5">${escHtml(familyPrompt?.prompt || 'Você é um especialista em turismo familiar. Com base nas informações do local abaixo, escreva um parágrafo curto explicando por que este local é indicado para famílias com crianças. Use linguagem acolhedora e direta. Não use asteriscos, emojis ou formatação especial.')}</textarea>
+            <div style="display:flex;justify-content:flex-end;margin-top:10px">
+              <button class="btn btn-orange" id="save-family-prompt-btn">💾 Salvar Prompt de Resumo</button>
+            </div>
+            <span id="family-prompt-status" style="font-size:12px;color:var(--text-muted);display:block;text-align:right;margin-top:4px"></span>
           </div>
 
           <div class="card">
@@ -2133,6 +2161,23 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
 
         document.getElementById('save-prompt')?.addEventListener('click', doSave);
         document.getElementById('save-prompt-inline')?.addEventListener('click', doSave);
+
+        document.getElementById('save-family-prompt-btn')?.addEventListener('click', async () => {
+          const text = document.getElementById('family-prompt-editor')?.value?.trim();
+          const statusEl = document.getElementById('family-prompt-status');
+          const btn = document.getElementById('save-family-prompt-btn');
+          if (!text || text.length < 10) { alert('O prompt deve ter pelo menos 10 caracteres.'); return; }
+          btn.disabled = true; btn.textContent = 'Salvando…';
+          if (statusEl) statusEl.textContent = '';
+          try {
+            const res = await apiFetch('/admin/ai-prompts/family-summary', { method: 'PUT', body: JSON.stringify({ prompt: text }) });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+            if (statusEl) { statusEl.textContent = 'Prompt salvo com sucesso!'; statusEl.style.color = '#059669'; }
+            setTimeout(() => { if (statusEl) { statusEl.textContent = ''; statusEl.style.color = ''; } }, 3000);
+          } catch(e) {
+            alert('Erro: ' + e.message);
+          } finally { btn.disabled = false; btn.textContent = '💾 Salvar Prompt de Resumo'; }
+        });
 
         document.getElementById('run-test-btn').addEventListener('click', async () => {
           const placeName = document.getElementById('test-place-name').value.trim();
@@ -2960,7 +3005,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           const provData = await provRes.json();
           const promptData = await promptRes.json();
           configuredProviders = (provData.providers || []).filter(p => p.configured);
-          activePromptText = promptData.prompt?.prompt || '';
+          activePromptText = ''; // Não reutilizar prompt de análise de reviews como busca
         } catch (e) {
           openModal('🔍 Configurar Busca com IA',
             `<div style="color:#dc2626;font-size:13px">Erro ao carregar configurações: ${escHtml(e.message)}</div>`,
@@ -3943,6 +3988,12 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           typeParquesBtn.textContent   = `🌳 Mudar para Parques (${count})`;
         }
 
+        const bulkAiBtn = document.getElementById('bulk-ai-summary-btn');
+        if (bulkAiBtn) {
+          bulkAiBtn.style.display = count >= 2 ? '' : 'none';
+          bulkAiBtn.textContent   = `✦ Prévia de Resumos IA (${count})`;
+        }
+
         const selectAll = document.getElementById('curation-select-all');
         if (selectAll) {
           const checks  = [...document.querySelectorAll('.curation-item-check')];
@@ -4049,12 +4100,14 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
               ${curationStatusFilter === 'pendente' ? `
                 <button class="btn btn-green btn-sm" id="bulk-approve-btn" style="display:none">✓ Aprovar Selecionados (0)</button>
                 <button class="btn btn-red btn-sm"   id="bulk-reject-btn"  style="display:none">✕ Rejeitar Selecionados (0)</button>
+                <button class="btn btn-sm" id="bulk-ai-summary-btn" style="display:none;background:#d1fae5;color:#065f46">✦ Prévia de Resumos IA (0)</button>
               ` : ''}
               ${curationStatusFilter === 'aprovado' ? `
                 <button class="btn btn-gray btn-sm"  id="bulk-to-pending-btn"   style="display:none">↩ Voltar para Fila (0)</button>
                 <button class="btn btn-red btn-sm"   id="bulk-to-rejected-btn"  style="display:none">✕ Mover para Rejeitados (0)</button>
                 <button class="btn btn-sm"            id="bulk-type-comer-btn"   style="display:none;background:#fde68a;color:#854d0e">🍽 Mudar para Comer (0)</button>
                 <button class="btn btn-sm"            id="bulk-type-parques-btn" style="display:none;background:#bbf7d0;color:#166534">🌳 Mudar para Parques (0)</button>
+                <button class="btn btn-sm" id="bulk-ai-summary-btn" style="display:none;background:#d1fae5;color:#065f46">✦ Prévia de Resumos IA (0)</button>
                 <button class="btn btn-sm" id="publicar-fila-btn" style="background:#FF6B35;color:#fff;margin-left:auto">📤 Publicar em ordem</button>
               ` : ''}
               ${curationStatusFilter === 'rejeitado' ? `
@@ -4152,6 +4205,12 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
           if (!ids.length) return;
           if (!confirm(`Mudar ${ids.length} lugar(es) para tipo Parques?`)) return;
           await executeBulkChangeType('parques', ids);
+        });
+
+        document.getElementById('bulk-ai-summary-btn')?.addEventListener('click', () => {
+          const ids = [...selectedCurationIds];
+          if (ids.length < 2) { alert('Selecione ao menos 2 locais para a prévia em massa.'); return; }
+          openBulkSummaryPreview(ids);
         });
 
         document.getElementById('publicar-fila-btn')?.addEventListener('click', async () => {
@@ -4886,13 +4945,39 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
                 <div style="margin-top:10px;font-size:13px;color:var(--text);background:var(--bg);border-radius:8px;padding:10px 12px;line-height:1.5">${escHtml(item.description)}</div>
               ` : ''}
 
+              <!-- Family Summary (IA) -->
+              ${!isAnalista ? `
+                <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="font-size:11px;font-weight:700;color:#059669;text-transform:uppercase;letter-spacing:.5px">Resumo para Famílias (IA)</span>
+                    <button class="btn btn-sm gen-ai-summary-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}"
+                      style="font-size:11px;padding:2px 8px;background:#d1fae5;color:#065f46;border:none;border-radius:5px;cursor:pointer">
+                      ${item.family_summary ? '↻ Gerar novamente' : '✦ Gerar com IA'}
+                    </button>
+                  </div>
+                  <textarea class="field-input family-summary-ta" data-id="${escHtml(item.place_id)}"
+                    rows="3" placeholder="Resumo gerado pela IA aparece aqui — edite se necessário…"
+                    style="width:100%;font-size:13px;line-height:1.5;resize:vertical">${escHtml(item.family_summary||'')}</textarea>
+                  <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+                    <button class="btn btn-sm save-ai-summary-btn" data-id="${escHtml(item.place_id)}"
+                      style="font-size:12px;background:#059669;color:#fff;border:none;border-radius:6px;cursor:pointer;padding:4px 12px">
+                      Salvar Resumo
+                    </button>
+                    <span class="save-ai-status" data-id="${escHtml(item.place_id)}" style="font-size:12px;color:var(--text-muted)"></span>
+                  </div>
+                </div>
+              ` : (item.family_summary ? `
+                <div style="margin-top:10px;padding:10px 12px;background:#e8f5e9;border-left:3px solid #059669;border-radius:6px;font-size:13px;color:#1a3c2e;line-height:1.5">
+                  ${escHtml(item.family_summary)}
+                </div>
+              ` : '')}
 
               <!-- Action buttons -->
               ${!isAnalista ? `
                 <div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);flex-wrap:wrap">
                   ${isPending ? `
                     <button class="btn btn-red btn-sm reject-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✕ Rejeitar</button>
-                    <button class="btn btn-orange btn-sm edit-approve-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}" data-desc="${escHtml(item.description||'')}" data-place-type="${escHtml(item.place_type||'comer')}" style="margin-left:auto">✏️ Editar e Aprovar</button>
+                    <button class="btn btn-orange btn-sm edit-approve-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}" data-desc="${escHtml(item.description||'')}" data-summary="${escHtml(item.family_summary||'')}" data-place-type="${escHtml(item.place_type||'comer')}" style="margin-left:auto">✏️ Editar e Aprovar</button>
                     <button class="btn btn-green btn-sm approve-place-btn" data-id="${escHtml(item.place_id)}" data-name="${escHtml(item.name||item.place_id)}">✓ Aprovar</button>
                   ` : ''}
                   ${curationStatusFilter === 'aprovado' ? `
@@ -4972,8 +5057,41 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             const id        = btn.dataset.id;
             const name      = btn.dataset.name;
             const desc      = btn.dataset.desc;
+            const summary   = btn.dataset.summary || '';
             const placeType = btn.dataset.placeType || 'comer';
-            openCurationEditModal(id, name, desc, placeType);
+            openCurationEditModal(id, name, desc, summary, placeType);
+          });
+        });
+
+        // Generate AI summary per card
+        listEl.querySelectorAll('.gen-ai-summary-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id   = btn.dataset.id;
+            const name = btn.dataset.name;
+            openAISummaryModal(id, name);
+          });
+        });
+
+        // Save AI summary per card
+        listEl.querySelectorAll('.save-ai-summary-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id;
+            const ta = listEl.querySelector(`.family-summary-ta[data-id="${id}"]`);
+            const statusEl = listEl.querySelector(`.save-ai-status[data-id="${id}"]`);
+            const summary = ta ? ta.value.trim() : '';
+            if (!summary) { alert('Nenhum resumo para salvar.'); return; }
+            btn.disabled = true;
+            if (statusEl) statusEl.textContent = 'Salvando…';
+            try {
+              const res = await apiFetch(`/admin/curation/${encodeURIComponent(id)}/family-summary`, {
+                method: 'PATCH', body: JSON.stringify({ family_summary: summary })
+              });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              if (statusEl) { statusEl.textContent = 'Resumo salvo!'; statusEl.style.color = '#059669'; }
+              setTimeout(() => { if (statusEl) { statusEl.textContent = ''; statusEl.style.color = ''; } }, 3000);
+            } catch(e) {
+              if (statusEl) { statusEl.textContent = 'Erro: ' + e.message; statusEl.style.color = '#dc2626'; }
+            } finally { btn.disabled = false; }
           });
         });
 
@@ -5145,7 +5263,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
         });
       }
 
-      function openCurationEditModal(placeId, placeName, desc, placeType) {
+      function openCurationEditModal(placeId, placeName, desc, familySummary, placeType) {
         const currentType = placeType || 'comer';
         openModal(
           `Editar e Aprovar — ${placeName}`,
@@ -5164,7 +5282,17 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             </div>
             <div class="field-group">
               <label class="field-label">Descrição kids-friendly</label>
-              <textarea class="field-input" id="edit-desc" rows="4" placeholder="Descreva por que é adequado para famílias com crianças…">${escHtml(desc)}</textarea>
+              <textarea class="field-input" id="edit-desc" rows="3" placeholder="Descreva por que é adequado para famílias com crianças…">${escHtml(desc)}</textarea>
+            </div>
+            <div class="field-group">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <label class="field-label" style="margin:0">Resumo para Famílias (aparece no app)</label>
+                <button id="ea-gen-ai" type="button" style="font-size:11px;padding:2px 8px;background:#d1fae5;color:#065f46;border:none;border-radius:5px;cursor:pointer">
+                  ${familySummary ? '↻ Gerar novamente' : '✦ Gerar com IA'}
+                </button>
+                <span id="ea-gen-status" style="font-size:12px;color:var(--text-muted)"></span>
+              </div>
+              <textarea class="field-input" id="edit-family-summary" rows="3" placeholder="Resumo gerado pela IA — edite se necessário…">${escHtml(familySummary)}</textarea>
             </div>
           `,
           `
@@ -5176,9 +5304,34 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
 
         document.getElementById('ea-cancel').addEventListener('click', closeModal);
 
+        document.getElementById('ea-gen-ai').addEventListener('click', async () => {
+          const genBtn = document.getElementById('ea-gen-ai');
+          const statusEl = document.getElementById('ea-gen-status');
+          genBtn.disabled = true;
+          genBtn.textContent = 'Gerando…';
+          if (statusEl) statusEl.textContent = '';
+          try {
+            const promptRes = await apiFetch('/admin/ai-prompts/family-summary');
+            const promptData = await promptRes.json();
+            const currentPrompt = promptData.prompt?.prompt || null;
+            const userPrompt = window.prompt('Prompt de geração (edite se necessário, depois clique OK):', currentPrompt || 'Você é um especialista em turismo familiar. Com base nas informações do local abaixo, escreva um parágrafo curto explicando por que este local é indicado para famílias com crianças. Use linguagem acolhedora e direta. Não use asteriscos, emojis ou formatação especial.');
+            if (!userPrompt) { genBtn.disabled = false; genBtn.textContent = familySummary ? '↻ Gerar novamente' : '✦ Gerar com IA'; return; }
+            const res = await apiFetch(`/admin/curation/${encodeURIComponent(placeId)}/generate-family-summary`, {
+              method: 'POST', body: JSON.stringify({ prompt: userPrompt })
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro ao gerar'); }
+            const data = await res.json();
+            document.getElementById('edit-family-summary').value = data.summary;
+            genBtn.textContent = '↻ Gerar novamente';
+          } catch(e) {
+            if (statusEl) { statusEl.textContent = 'Erro: ' + e.message; statusEl.style.color = '#dc2626'; }
+          } finally { genBtn.disabled = false; }
+        });
+
         document.getElementById('ea-save').addEventListener('click', async () => {
           const name = document.getElementById('edit-name').value.trim();
           const description = document.getElementById('edit-desc').value.trim();
+          const familySummaryVal = document.getElementById('edit-family-summary').value.trim();
           const selectedPlaceType = document.getElementById('edit-place-type').value;
           if (!name) { alert('Nome é obrigatório.'); return; }
 
@@ -5190,6 +5343,7 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             const body = {};
             if (name) body.name = name;
             if (description) body.description = description;
+            if (familySummaryVal) body.family_summary = familySummaryVal;
             body.place_type = selectedPlaceType;
             const res = await apiFetch(`/admin/curation/${placeId}/approve`, {
               method: 'POST',
@@ -5204,6 +5358,204 @@ Tem fraldário limpo e cadeirão para bebês. Excelente atendimento para famíli
             saveBtn.disabled = false;
             saveBtn.textContent = '✓ Aprovar com edição';
           }
+        });
+      }
+
+      // =====================================================================
+      // ===== AI SUMMARY MODAL (per card) ===================================
+      // =====================================================================
+      async function openAISummaryModal(placeId, placeName) {
+        // Load current prompt
+        let currentPrompt = 'Você é um especialista em turismo familiar. Com base nas informações do local abaixo, escreva um parágrafo curto explicando por que este local é indicado para famílias com crianças. Use linguagem acolhedora e direta. Não use asteriscos, emojis ou formatação especial.';
+        try {
+          const promptRes = await apiFetch('/admin/ai-prompts/family-summary');
+          if (promptRes.ok) {
+            const pd = await promptRes.json();
+            if (pd.prompt?.prompt) currentPrompt = pd.prompt.prompt;
+          }
+        } catch(e) { /* use default */ }
+
+        openModal(
+          `Gerar Resumo IA — ${placeName}`,
+          `
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Edite o prompt se necessário. Após gerar, o texto aparecerá no card para você revisar e salvar.</p>
+            <div class="field-group">
+              <label class="field-label">Prompt de geração</label>
+              <textarea class="field-input" id="ai-modal-prompt" rows="5">${escHtml(currentPrompt)}</textarea>
+              <p style="font-size:11px;color:var(--text-muted);margin-top:4px">Editar o prompt aqui salva como novo padrão para todos os locais.</p>
+            </div>
+            <div id="ai-modal-result" style="display:none;margin-top:12px">
+              <label class="field-label">Resumo gerado</label>
+              <div id="ai-modal-summary-text" style="background:#e8f5e9;border-left:3px solid #059669;border-radius:6px;padding:10px 12px;font-size:13px;line-height:1.6;color:#1a3c2e"></div>
+            </div>
+            <div id="ai-modal-error" style="display:none;margin-top:12px;color:#dc2626;font-size:13px"></div>
+          `,
+          `
+            <button class="btn btn-gray" id="ai-modal-cancel">Cancelar</button>
+            <button class="btn btn-green" id="ai-modal-generate">✦ Gerar</button>
+          `,
+          false,
+        );
+
+        document.getElementById('ai-modal-cancel').addEventListener('click', closeModal);
+
+        document.getElementById('ai-modal-generate').addEventListener('click', async () => {
+          const genBtn = document.getElementById('ai-modal-generate');
+          const prompt = document.getElementById('ai-modal-prompt').value.trim();
+          const resultDiv = document.getElementById('ai-modal-result');
+          const errorDiv = document.getElementById('ai-modal-error');
+          const summaryText = document.getElementById('ai-modal-summary-text');
+          if (!prompt) { alert('O prompt não pode estar vazio.'); return; }
+
+          genBtn.disabled = true;
+          genBtn.textContent = 'Gerando…';
+          resultDiv.style.display = 'none';
+          errorDiv.style.display = 'none';
+
+          try {
+            const res = await apiFetch(`/admin/curation/${encodeURIComponent(placeId)}/generate-family-summary`, {
+              method: 'POST', body: JSON.stringify({ prompt })
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro ao gerar'); }
+            const data = await res.json();
+
+            summaryText.textContent = data.summary;
+            resultDiv.style.display = '';
+            genBtn.textContent = '↻ Gerar novamente';
+
+            // Fill the card textarea if visible
+            const cardTa = document.querySelector(`.family-summary-ta[data-id="${placeId}"]`);
+            if (cardTa) cardTa.value = data.summary;
+
+            // Change footer buttons
+            const footer = document.querySelector('#modal-footer');
+            if (footer && !document.getElementById('ai-modal-save')) {
+              const saveBtn = document.createElement('button');
+              saveBtn.id = 'ai-modal-save';
+              saveBtn.className = 'btn btn-green';
+              saveBtn.textContent = 'Salvar Resumo';
+              saveBtn.addEventListener('click', async () => {
+                saveBtn.disabled = true; saveBtn.textContent = 'Salvando…';
+                try {
+                  const sr = await apiFetch(`/admin/curation/${encodeURIComponent(placeId)}/family-summary`, {
+                    method: 'PATCH', body: JSON.stringify({ family_summary: data.summary })
+                  });
+                  if (!sr.ok) { const sd = await sr.json(); throw new Error(sd.error || 'Erro'); }
+                  closeModal();
+                  loadCurationList();
+                } catch(e) { alert('Erro ao salvar: ' + e.message); saveBtn.disabled = false; saveBtn.textContent = 'Salvar Resumo'; }
+              });
+              footer.insertBefore(saveBtn, footer.lastElementChild);
+            }
+          } catch(e) {
+            errorDiv.textContent = 'Erro: ' + e.message;
+            errorDiv.style.display = '';
+            genBtn.textContent = '↻ Tentar novamente';
+          } finally { genBtn.disabled = false; }
+        });
+      }
+
+      // =====================================================================
+      // ===== BULK AI SUMMARY PREVIEW =======================================
+      // =====================================================================
+      async function openBulkSummaryPreview(ids) {
+        const names = {};
+        ids.forEach(id => {
+          const card = document.querySelector(`.cura-card[data-place-id="${id}"]`);
+          const nameEl = card ? card.querySelector('[style*="font-weight:700"]') : null;
+          names[id] = nameEl ? nameEl.textContent.trim() : id;
+        });
+
+        let currentPrompt = 'Você é um especialista em turismo familiar. Com base nas informações do local abaixo, escreva um parágrafo curto explicando por que este local é indicado para famílias com crianças. Use linguagem acolhedora e direta. Não use asteriscos, emojis ou formatação especial.';
+        try {
+          const promptRes = await apiFetch('/admin/ai-prompts/family-summary');
+          if (promptRes.ok) { const pd = await promptRes.json(); if (pd.prompt?.prompt) currentPrompt = pd.prompt.prompt; }
+        } catch(e) { /* use default */ }
+
+        const rows = ids.map(id => `
+          <div class="bulk-summary-row" data-id="${escHtml(id)}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px">${escHtml(names[id])}</div>
+            <div class="bulk-row-status" style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Aguardando geração…</div>
+            <textarea class="field-input bulk-row-ta" data-id="${escHtml(id)}" rows="2" placeholder="Resumo gerado aparecerá aqui" style="width:100%;font-size:13px;display:none"></textarea>
+            <div class="bulk-row-error" style="font-size:12px;color:#dc2626;display:none"></div>
+          </div>
+        `).join('');
+
+        openModal(
+          `Prévia de Resumos IA — ${ids.length} locais`,
+          `
+            <div class="field-group" style="margin-bottom:12px">
+              <label class="field-label">Prompt de geração</label>
+              <textarea class="field-input" id="bulk-ai-prompt" rows="4">${escHtml(currentPrompt)}</textarea>
+            </div>
+            <div id="bulk-rows">${rows}</div>
+          `,
+          `
+            <button class="btn btn-gray" id="bulk-cancel">Cancelar</button>
+            <button class="btn btn-green" id="bulk-generate">✦ Gerar para todos</button>
+            <button class="btn btn-green" id="bulk-save-all" style="display:none">Confirmar e Salvar Todos</button>
+          `,
+          false,
+        );
+
+        document.getElementById('bulk-cancel').addEventListener('click', closeModal);
+
+        document.getElementById('bulk-generate').addEventListener('click', async () => {
+          const genBtn = document.getElementById('bulk-generate');
+          const saveAllBtn = document.getElementById('bulk-save-all');
+          const prompt = document.getElementById('bulk-ai-prompt').value.trim();
+          if (!prompt) { alert('O prompt não pode estar vazio.'); return; }
+          genBtn.disabled = true; genBtn.textContent = 'Gerando…';
+
+          let allOk = true;
+          for (const id of ids) {
+            const row = document.querySelector(`.bulk-summary-row[data-id="${id}"]`);
+            const statusEl = row.querySelector('.bulk-row-status');
+            const ta = row.querySelector('.bulk-row-ta');
+            const errEl = row.querySelector('.bulk-row-error');
+            statusEl.textContent = 'Gerando…'; statusEl.style.color = '#0369a1';
+            errEl.style.display = 'none'; ta.style.display = 'none';
+            try {
+              const res = await apiFetch(`/admin/curation/${encodeURIComponent(id)}/generate-family-summary`, {
+                method: 'POST', body: JSON.stringify({ prompt })
+              });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              const data = await res.json();
+              ta.value = data.summary; ta.style.display = '';
+              statusEl.textContent = 'Gerado'; statusEl.style.color = '#059669';
+            } catch(e) {
+              statusEl.textContent = 'Erro'; statusEl.style.color = '#dc2626';
+              errEl.textContent = e.message; errEl.style.display = '';
+              allOk = false;
+            }
+          }
+
+          genBtn.disabled = false; genBtn.textContent = '↻ Gerar novamente';
+          if (saveAllBtn) saveAllBtn.style.display = '';
+        });
+
+        document.getElementById('bulk-save-all').addEventListener('click', async () => {
+          const saveAllBtn = document.getElementById('bulk-save-all');
+          saveAllBtn.disabled = true; saveAllBtn.textContent = 'Salvando…';
+          let saved = 0; const errors = [];
+          for (const id of ids) {
+            const row = document.querySelector(`.bulk-summary-row[data-id="${id}"]`);
+            const ta = row.querySelector('.bulk-row-ta');
+            const summary = ta.value.trim();
+            if (!summary) continue;
+            try {
+              const res = await apiFetch(`/admin/curation/${encodeURIComponent(id)}/family-summary`, {
+                method: 'PATCH', body: JSON.stringify({ family_summary: summary })
+              });
+              if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Erro'); }
+              saved++;
+            } catch(e) { errors.push(id + ': ' + e.message); }
+          }
+          saveAllBtn.disabled = false; saveAllBtn.textContent = 'Confirmar e Salvar Todos';
+          closeModal();
+          loadCurationList();
+          if (errors.length > 0) alert(`Salvos: ${saved}. Erros:\n` + errors.join('\n'));
+          else alert(`${saved} resumo(s) salvo(s) com sucesso.`);
         });
       }
 

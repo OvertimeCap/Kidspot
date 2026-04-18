@@ -44,6 +44,8 @@ import {
   type SponsorshipContract,
   type SponsorshipContractStatus,
   type CityDemand,
+  aiPrompts,
+  type AiPrompt,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -1085,6 +1087,7 @@ export type CurationItem = {
   ai_evidences: unknown;
   curation_status: CurationStatus;
   description: string | null;
+  family_summary: string | null;
   custom_criteria: unknown;
   ingested_at: Date;
   updated_at: Date;
@@ -1128,6 +1131,7 @@ export async function listCurationQueue(opts: {
         ai_evidences: placeKidspotMeta.ai_evidences,
         curation_status: placeKidspotMeta.curation_status,
         description: placeKidspotMeta.description,
+        family_summary: placeKidspotMeta.family_summary,
         custom_criteria: placeKidspotMeta.custom_criteria,
         ingested_at: placeKidspotMeta.ingested_at,
         updated_at: placeKidspotMeta.updated_at,
@@ -1187,6 +1191,7 @@ export async function upsertPlaceMeta(data: {
   kid_score?: number;
   ai_evidences?: unknown;
   description?: string;
+  family_summary?: string;
   city?: string;
 }): Promise<void> {
   if (data.city) {
@@ -1211,6 +1216,7 @@ export async function upsertPlaceMeta(data: {
       kid_score: data.kid_score ?? null,
       ai_evidences: data.ai_evidences ?? null,
       description: data.description ?? null,
+      family_summary: data.family_summary ?? null,
       curation_status: "pendente",
       ingested_at: new Date(),
       updated_at: new Date(),
@@ -1224,6 +1230,7 @@ export async function upsertPlaceMeta(data: {
         ...(data.kid_score !== undefined && { kid_score: data.kid_score }),
         ...(data.ai_evidences !== undefined && { ai_evidences: data.ai_evidences }),
         ...(data.description !== undefined && { description: data.description }),
+        ...(data.family_summary !== undefined && { family_summary: data.family_summary }),
         updated_at: new Date(),
       },
     });
@@ -1258,7 +1265,7 @@ export async function upsertPlaceWithCity(data: {
 export async function approveCurationItem(
   placeId: string,
   curatedBy: string,
-  edits?: { name?: string; description?: string; custom_criteria?: unknown; place_type?: "comer" | "parques" },
+  edits?: { name?: string; description?: string; family_summary?: string; custom_criteria?: unknown; place_type?: "comer" | "parques" },
 ): Promise<void> {
   const set: Record<string, unknown> = {
     curation_status: "aprovado",
@@ -1268,6 +1275,7 @@ export async function approveCurationItem(
   };
   if (edits?.name !== undefined) set.name = edits.name;
   if (edits?.description !== undefined) set.description = edits.description;
+  if (edits?.family_summary !== undefined) set.family_summary = edits.family_summary;
   if (edits?.custom_criteria !== undefined) set.custom_criteria = edits.custom_criteria;
   if (edits?.place_type !== undefined) set.place_type = edits.place_type;
 
@@ -2004,4 +2012,48 @@ export async function listCityDemand(estado?: string): Promise<CityDemand[]> {
 
 export async function deleteCityDemand(id: string): Promise<void> {
   await db.delete(cityDemand).where(eq(cityDemand.id, id));
+}
+
+// --- AI Prompts by name ---
+
+export async function getAiPromptByName(name: string): Promise<AiPrompt | null> {
+  const row = await db.query.aiPrompts.findFirst({
+    where: eq(aiPrompts.name, name),
+    orderBy: (t, { desc }) => [desc(t.updated_at)],
+  });
+  return row ?? null;
+}
+
+export async function upsertAiPromptByName(name: string, promptText: string): Promise<AiPrompt> {
+  const existing = await getAiPromptByName(name);
+  if (existing) {
+    const [updated] = await db
+      .update(aiPrompts)
+      .set({ prompt: promptText, updated_at: new Date() })
+      .where(eq(aiPrompts.id, existing.id))
+      .returning();
+    return updated;
+  }
+  const [created] = await db
+    .insert(aiPrompts)
+    .values({ name, prompt: promptText, is_active: false })
+    .returning();
+  return created;
+}
+
+// --- Family summary ---
+
+export async function updatePlaceFamilySummary(placeId: string, familySummary: string): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({ family_summary: familySummary, updated_at: new Date() })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function getPlaceMetaForDetails(placeId: string): Promise<{ family_summary: string | null } | null> {
+  const row = await db.query.placeKidspotMeta.findFirst({
+    where: eq(placeKidspotMeta.place_id, placeId),
+    columns: { family_summary: true },
+  });
+  return row ?? null;
 }

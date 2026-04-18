@@ -177,23 +177,25 @@ async function nearbySearchOne(
 export async function searchPlacesByText(
   city: string,
   query?: string,
+  lat?: number,
+  lng?: number,
 ): Promise<MinimalPlace[]> {
   const bias = CITY_BIASES[city];
-  const lat = bias?.lat;
-  const lng = bias?.lng;
+  const biasLat = lat ?? bias?.lat;
+  const biasLng = lng ?? bias?.lng;
 
   let queries: string[];
 
   if (query) {
-    // User typed something specific — search for it with a kid-friendly suffix
-    queries = [`${query} infantil criança em ${city} SP Brasil`];
+    // User typed something specific — search for it in the city
+    queries = [`${query} em ${city}`];
   } else {
     // No query — run all kid-focused categories in parallel
-    queries = KID_TEXT_QUERIES.map((q) => `${q} em ${city} SP Brasil`);
+    queries = KID_TEXT_QUERIES.map((q) => `${q} em ${city}`);
   }
 
   const results = await Promise.allSettled(
-    queries.map((q) => textSearchOne(q, lat, lng, 10000)),
+    queries.map((q) => textSearchOne(q, biasLat, biasLng, 10000)),
   );
 
   const all: MinimalPlace[] = [];

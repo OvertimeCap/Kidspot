@@ -408,6 +408,13 @@ export default function PlaceDetailsScreen() {
           )}
         </View>
 
+        {place.family_summary ? (
+          <View style={summaryStyles.card}>
+            <Text style={summaryStyles.title}>Por que é indicado para famílias</Text>
+            <Text style={summaryStyles.body}>{place.family_summary}</Text>
+          </View>
+        ) : null}
+
         {kidsAreaPhotos.length > 0 && (
           <View style={styles.kidsAreaSection}>
             <View style={styles.kidsAreaHeader}>
@@ -564,6 +571,31 @@ export default function PlaceDetailsScreen() {
     </ScrollView>
   );
 }
+
+const summaryStyles = StyleSheet.create({
+  card: {
+    backgroundColor: "#E8F5E9",
+    borderLeftWidth: 3,
+    borderLeftColor: "#059669",
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#059669",
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  body: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "#1a3c2e",
+    lineHeight: 21,
+  },
+});
 
 const styles = StyleSheet.create({
   container: {

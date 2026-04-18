@@ -15,8 +15,13 @@ import {
   deletePlacePhoto,
   getActiveSponsoredPlaceIds,
   updatePlaceType,
+  getAiPromptByName,
+  upsertAiPromptByName,
+  updatePlaceFamilySummary,
+  getReviewsForPlace,
 } from "../storage";
 import { getPlaceDetails } from "../google-places";
+import { generateFamilySummary, DEFAULT_FAMILY_SUMMARY_PROMPT } from "../ai-family-summary";
 import { requireAuth, type AuthRequest } from "../auth";
 import { requireAdminOrCollaborator } from "./helpers";
 import { eq, and, isNull, or } from "drizzle-orm";
@@ -193,6 +198,7 @@ router.post(
 const curationApproveSchema = z.object({
   name: z.string().optional(),
   description: z.string().optional(),
+  family_summary: z.string().optional(),
   custom_criteria: z.record(z.unknown()).optional(),
   place_type: z.enum(["comer", "parques"]).optional(),
 });
@@ -291,6 +297,90 @@ router.delete("/api/admin/photos/:photoId", requireAuth, requireAdminOrCollabora
       res.json({ ok: true });
     } catch (err) {
       console.error("Delete photo error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  },
+);
+
+const generateSummarySchema = z.object({
+  prompt: z.string().optional(),
+});
+
+router.post(
+  "/api/admin/curation/:placeId/generate-family-summary",
+  requireAuth,
+  requireAdminOrCollaborator,
+  async (req: AuthRequest, res: Response) => {
+    const placeId = req.params.placeId as string;
+    const parsed = generateSummarySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    try {
+      const [meta, reviews] = await Promise.all([
+        db.query.placeKidspotMeta.findFirst({
+          where: eq(placeKidspotMeta.place_id, placeId),
+          columns: { name: true, category: true, ai_evidences: true },
+        }),
+        getReviewsForPlace(placeId),
+      ]);
+
+      if (!meta) {
+        res.status(404).json({ error: "Local não encontrado na fila de curadoria." });
+        return;
+      }
+
+      let prompt = parsed.data.prompt;
+      if (prompt) {
+        await upsertAiPromptByName("family_summary", prompt);
+      } else {
+        const stored = await getAiPromptByName("family_summary");
+        prompt = stored?.prompt ?? DEFAULT_FAMILY_SUMMARY_PROMPT;
+      }
+
+      const reviewNotes = reviews
+        .map((r) => r.note)
+        .filter((n): n is string => !!n && n.trim().length > 0);
+
+      const summary = await generateFamilySummary({
+        placeName: meta.name ?? placeId,
+        category: meta.category ?? null,
+        reviewNotes,
+        aiEvidences: meta.ai_evidences,
+        prompt,
+      });
+
+      res.json({ summary });
+    } catch (err) {
+      console.error("Generate family summary error:", err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  },
+);
+
+const saveSummarySchema = z.object({
+  family_summary: z.string().min(1),
+});
+
+router.patch(
+  "/api/admin/curation/:placeId/family-summary",
+  requireAuth,
+  requireAdminOrCollaborator,
+  async (req: AuthRequest, res: Response) => {
+    const placeId = req.params.placeId as string;
+    const parsed = saveSummarySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    try {
+      await updatePlaceFamilySummary(placeId, parsed.data.family_summary);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Save family summary error:", err);
       res.status(500).json({ error: (err as Error).message });
     }
   },

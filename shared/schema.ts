@@ -330,6 +330,7 @@ export const placeKidspotMeta = pgTable("place_kidspot_meta", {
   ai_evidences: jsonb("ai_evidences"),
   curation_status: curationStatusEnum("curation_status").notNull().default("pendente"),
   description: text("description"),
+  family_summary: text("family_summary"),
   custom_criteria: jsonb("custom_criteria"),
   curated_by: varchar("curated_by"),
   curated_at: timestamp("curated_at"),

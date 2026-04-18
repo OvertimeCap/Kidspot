@@ -293,16 +293,10 @@ router.post("/api/cities/places/search", async (req: AuthRequest, res: Response)
       return;
     }
 
-    // Se bounds foi enviado, verifica se o centro da cidade está dentro do viewport —
-    // isso garante que ao navegar além do raio central a cidade ainda seja carregada
-    // enquanto estiver visível no mapa. Sem bounds, mantém a lógica original de raio.
-    const cityLat = parseFloat(result.city.latitude);
-    const cityLng = parseFloat(result.city.longitude);
-    const cityInView = bounds
-      ? isWithinBounds(cityLat, cityLng, bounds)
-      : result.enabled;
-
-    if (!cityInView) {
+    // Quando `bounds` é fornecido (busca via mapa), não usamos raio_km como gate —
+    // os bounds já garantem que só aparecem places visíveis no viewport.
+    // Quando não há bounds (busca por localização sem mapa), mantém a lógica original de raio.
+    if (!bounds && !result.enabled) {
       res.json({ city_id: null, city_name: null, places: [] });
       return;
     }

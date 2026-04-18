@@ -7,6 +7,7 @@ import {
   incrementImpressions,
   incrementDetailAccess,
   listPlacePhotosForDisplay,
+  getPlaceMetaForDetails,
 } from "../storage";
 import { requireAuth, type AuthRequest } from "../auth";
 import { ESTABLISHMENT_TYPES } from "./helpers";
@@ -135,12 +136,13 @@ router.get("/api/places/details", async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const [details, sponsoredMap] = await Promise.all([
+    const [details, sponsoredMap, meta] = await Promise.all([
       getPlaceDetails(placeId),
       getActiveSponsoredPlaceIds(),
+      getPlaceMetaForDetails(placeId),
     ]);
     incrementDetailAccess(placeId).catch(() => {});
-    res.json({ place: { ...details, is_sponsored: sponsoredMap.has(placeId) } });
+    res.json({ place: { ...details, is_sponsored: sponsoredMap.has(placeId), family_summary: meta?.family_summary ?? null } });
   } catch (err) {
     console.error("Places details error:", err);
     res.status(500).json({ error: (err as Error).message });

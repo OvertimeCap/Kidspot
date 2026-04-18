@@ -21,6 +21,7 @@ export type PlaceDetails = MinimalPlace & {
   website?: string;
   formatted_phone_number?: string;
   is_sponsored?: boolean;
+  family_summary?: string | null;
 };
 
 export type KidFlags = {

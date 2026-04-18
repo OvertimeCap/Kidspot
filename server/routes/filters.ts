@@ -10,6 +10,8 @@ import {
   createFilter,
   updateFilter,
   toggleFilter,
+  getAiPromptByName,
+  upsertAiPromptByName,
 } from "../storage";
 import { requireAuth, type AuthRequest } from "../auth";
 import { invalidatePromptCache } from "../ai-review-analysis";
@@ -240,6 +242,41 @@ router.patch("/api/admin/filters/:id/toggle", requireAuth, async (req: AuthReque
     res.json({ filter });
   } catch (err) {
     console.error("Toggle filter error:", err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.get("/api/admin/ai-prompts/family-summary", requireAuth, async (req: AuthRequest, res: Response) => {
+  const caller = await getUserById(req.user!.userId);
+  if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+    res.status(403).json({ error: "Acesso negado" });
+    return;
+  }
+  try {
+    const prompt = await getAiPromptByName("family_summary");
+    res.json({ prompt });
+  } catch (err) {
+    console.error("Get family summary prompt error:", err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.put("/api/admin/ai-prompts/family-summary", requireAuth, async (req: AuthRequest, res: Response) => {
+  const caller = await getUserById(req.user!.userId);
+  if (!caller || (caller.role !== "admin" && caller.role !== "colaborador")) {
+    res.status(403).json({ error: "Acesso negado" });
+    return;
+  }
+  const parsed = z.object({ prompt: z.string().min(10) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const prompt = await upsertAiPromptByName("family_summary", parsed.data.prompt);
+    res.json({ prompt });
+  } catch (err) {
+    console.error("Update family summary prompt error:", err);
     res.status(500).json({ error: (err as Error).message });
   }
 });

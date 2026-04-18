@@ -241,10 +241,14 @@ export async function aiSearchForCity(
   });
   if (!city) throw new Error("Cidade não encontrada ou não está ativa");
 
-  const searchQuery = options.prompt
-    ? `${city.nome} ${options.prompt}`
-    : city.nome;
-  const rawPlaces = await searchPlacesByText(searchQuery);
+  const cityLat = city.latitude ? Number(city.latitude) : undefined;
+  const cityLng = city.longitude ? Number(city.longitude) : undefined;
+  const rawPlaces = await searchPlacesByText(
+    city.nome,
+    options.prompt || undefined,
+    cityLat,
+    cityLng,
+  );
   const limited = rawPlaces.slice(0, limit);
 
   await db.update(cities).set({ ultima_varredura: new Date() }).where(eq(cities.id, cityId));
