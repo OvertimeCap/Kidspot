@@ -17,34 +17,23 @@ declare module "http" {
 
 function setupCors(app: express.Application) {
   app.use((req, res, next) => {
-    const origins = new Set<string>();
-
-    if (process.env.REPLIT_DEV_DOMAIN) {
-      origins.add(`https://${process.env.REPLIT_DEV_DOMAIN}`);
-    }
-
-    if (process.env.REPLIT_DOMAINS) {
-      process.env.REPLIT_DOMAINS.split(",").forEach((d) => {
-        origins.add(`https://${d.trim()}`);
-      });
-    }
-
     const origin = req.header("origin");
 
-    // Allow localhost origins for Expo web development (any port)
-    const isLocalhost =
-      origin?.startsWith("http://localhost:") ||
-      origin?.startsWith("http://127.0.0.1:");
-
-    if (origin && (origins.has(origin) || isLocalhost)) {
+    // Allow any origin: Expo Go connects from arbitrary IPs/networks,
+    // and Vercel/hosted deployments may receive requests from any client.
+    // Auth is enforced via JWT, so open CORS is safe here.
+    if (origin) {
       res.header("Access-Control-Allow-Origin", origin);
-      res.header(
-        "Access-Control-Allow-Methods",
-        "GET, POST, PUT, DELETE, OPTIONS",
-      );
-      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
       res.header("Access-Control-Allow-Credentials", "true");
+    } else {
+      res.header("Access-Control-Allow-Origin", "*");
     }
+
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    );
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
 
     if (req.method === "OPTIONS") {
       return res.sendStatus(200);
@@ -299,7 +288,7 @@ function setupErrorHandler(app: express.Application) {
   });
 }
 
-(async () => {
+export async function createApp(): Promise<express.Application> {
   setupCors(app);
   setupBodyParsing(app);
   setupRequestLogging(app);
@@ -308,20 +297,23 @@ function setupErrorHandler(app: express.Application) {
   configureExpoAndLanding(app);
 
   await seedConfigDefaults();
-
-  const server = await registerRoutes(app);
+  await registerRoutes(app);
 
   setupErrorHandler(app);
 
-  const port = parseInt(process.env.PORT || "5000", 10);
-  server.listen(
-    {
-      port,
-      host: "0.0.0.0",
-    },
-    () => {
-      log(`express server serving on port ${port}`);
-    },
-  );
+  return app;
+}
 
-})();
+// Only start the HTTP server when running locally (not on Vercel).
+// Vercel injects process.env.VERCEL = "1" automatically.
+if (!process.env.VERCEL) {
+  (async () => {
+    const configuredApp = await createApp();
+    const { createServer } = await import("node:http");
+    const server = createServer(configuredApp);
+    const port = parseInt(process.env.PORT || "5000", 10);
+    server.listen({ port, host: "0.0.0.0" }, () => {
+      log(`express server serving on port ${port}`);
+    });
+  })();
+}

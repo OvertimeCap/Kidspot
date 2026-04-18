@@ -44,6 +44,8 @@ import {
   type SponsorshipContract,
   type SponsorshipContractStatus,
   type CityDemand,
+  aiPrompts,
+  type AiPrompt,
 } from "@shared/schema";
 import type { KidFlags } from "./kid-score";
 import bcrypt from "bcryptjs";
@@ -1085,12 +1087,15 @@ export type CurationItem = {
   ai_evidences: unknown;
   curation_status: CurationStatus;
   description: string | null;
+  family_summary: string | null;
   custom_criteria: unknown;
   ingested_at: Date;
   updated_at: Date;
   curated_at: Date | null;
   city: string;
+  ciudad_id: string | null;
   place_type: "comer" | "parques" | null;
+  display_order: number | null;
   photos: PlacePhoto[];
 };
 
@@ -1126,12 +1131,15 @@ export async function listCurationQueue(opts: {
         ai_evidences: placeKidspotMeta.ai_evidences,
         curation_status: placeKidspotMeta.curation_status,
         description: placeKidspotMeta.description,
+        family_summary: placeKidspotMeta.family_summary,
         custom_criteria: placeKidspotMeta.custom_criteria,
         ingested_at: placeKidspotMeta.ingested_at,
         updated_at: placeKidspotMeta.updated_at,
         curated_at: placeKidspotMeta.curated_at,
         place_type: placeKidspotMeta.place_type,
+        display_order: placeKidspotMeta.display_order,
         city: placesKidspot.city,
+        ciudad_id: placesKidspot.ciudad_id,
       })
       .from(placeKidspotMeta)
       .innerJoin(placesKidspot, eq(placeKidspotMeta.place_id, placesKidspot.place_id))
@@ -1183,6 +1191,7 @@ export async function upsertPlaceMeta(data: {
   kid_score?: number;
   ai_evidences?: unknown;
   description?: string;
+  family_summary?: string;
   city?: string;
 }): Promise<void> {
   if (data.city) {
@@ -1207,6 +1216,7 @@ export async function upsertPlaceMeta(data: {
       kid_score: data.kid_score ?? null,
       ai_evidences: data.ai_evidences ?? null,
       description: data.description ?? null,
+      family_summary: data.family_summary ?? null,
       curation_status: "pendente",
       ingested_at: new Date(),
       updated_at: new Date(),
@@ -1214,12 +1224,13 @@ export async function upsertPlaceMeta(data: {
     .onConflictDoUpdate({
       target: placeKidspotMeta.place_id,
       set: {
-        name: data.name ?? null,
-        address: data.address ?? null,
-        category: data.category ?? null,
-        kid_score: data.kid_score ?? null,
-        ai_evidences: data.ai_evidences ?? null,
-        description: data.description ?? null,
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.address !== undefined && { address: data.address }),
+        ...(data.category !== undefined && { category: data.category }),
+        ...(data.kid_score !== undefined && { kid_score: data.kid_score }),
+        ...(data.ai_evidences !== undefined && { ai_evidences: data.ai_evidences }),
+        ...(data.description !== undefined && { description: data.description }),
+        ...(data.family_summary !== undefined && { family_summary: data.family_summary }),
         updated_at: new Date(),
       },
     });
@@ -1254,7 +1265,7 @@ export async function upsertPlaceWithCity(data: {
 export async function approveCurationItem(
   placeId: string,
   curatedBy: string,
-  edits?: { name?: string; description?: string; custom_criteria?: unknown; place_type?: "comer" | "parques" },
+  edits?: { name?: string; description?: string; family_summary?: string; custom_criteria?: unknown; place_type?: "comer" | "parques" },
 ): Promise<void> {
   const set: Record<string, unknown> = {
     curation_status: "aprovado",
@@ -1264,6 +1275,7 @@ export async function approveCurationItem(
   };
   if (edits?.name !== undefined) set.name = edits.name;
   if (edits?.description !== undefined) set.description = edits.description;
+  if (edits?.family_summary !== undefined) set.family_summary = edits.family_summary;
   if (edits?.custom_criteria !== undefined) set.custom_criteria = edits.custom_criteria;
   if (edits?.place_type !== undefined) set.place_type = edits.place_type;
 
@@ -1280,6 +1292,18 @@ export async function rejectCurationItem(placeId: string, curatedBy: string): Pr
       curation_status: "rejeitado",
       curated_by: curatedBy,
       curated_at: new Date(),
+      updated_at: new Date(),
+    })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function resetCurationItem(placeId: string): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({
+      curation_status: "pendente",
+      curated_by: null,
+      curated_at: null,
       updated_at: new Date(),
     })
     .where(eq(placeKidspotMeta.place_id, placeId));
@@ -1333,8 +1357,60 @@ export async function setCoverPhoto(placeId: string, photoId: string): Promise<v
 export async function deletePlacePhoto(photoId: string): Promise<void> {
   await db
     .update(placePhotos)
-    .set({ deleted: true, is_cover: false })
+    .set({ deleted: true, is_cover: false, is_kids_area: false })
     .where(eq(placePhotos.id, photoId));
+}
+
+export async function getPhotoById(photoId: string): Promise<PlacePhoto | null> {
+  const [photo] = await db
+    .select()
+    .from(placePhotos)
+    .where(eq(placePhotos.id, photoId))
+    .limit(1);
+  return photo ?? null;
+}
+
+export async function countPlacePhotos(placeId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(placePhotos)
+    .where(and(eq(placePhotos.place_id, placeId), eq(placePhotos.deleted, false)));
+  return row?.count ?? 0;
+}
+
+export async function setKidsAreaPhoto(
+  placeId: string,
+  photoId: string,
+  isKidsArea: boolean,
+): Promise<void> {
+  if (isKidsArea) {
+    const existing = await db
+      .select({ id: placePhotos.id })
+      .from(placePhotos)
+      .where(
+        and(
+          eq(placePhotos.place_id, placeId),
+          eq(placePhotos.is_kids_area, true),
+          eq(placePhotos.deleted, false),
+          ne(placePhotos.id, photoId),
+        ),
+      );
+    if (existing.length >= 2) {
+      throw new Error("Limite de 2 fotos de área kids por local atingido");
+    }
+  }
+  await db
+    .update(placePhotos)
+    .set({ is_kids_area: isKidsArea })
+    .where(and(eq(placePhotos.id, photoId), eq(placePhotos.place_id, placeId)));
+}
+
+export async function listPlacePhotosForDisplay(placeId: string): Promise<PlacePhoto[]> {
+  return db
+    .select()
+    .from(placePhotos)
+    .where(and(eq(placePhotos.place_id, placeId), eq(placePhotos.deleted, false)))
+    .orderBy(desc(placePhotos.is_cover), asc(placePhotos.order));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1537,6 +1613,16 @@ export async function getActiveSponsoredPlaceIds(): Promise<Map<string, number>>
   return map;
 }
 
+export async function updatePlaceType(
+  placeId: string,
+  placeType: "comer" | "parques",
+): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({ place_type: placeType, updated_at: new Date() })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
 export async function incrementImpressions(placeIds: string[]): Promise<void> {
   if (placeIds.length === 0) return;
   await db
@@ -1619,9 +1705,11 @@ export type CuratedPlaceRow = {
   name: string | null;
   address: string | null;
   category: string | null;
+  place_type: "comer" | "parques" | null;
   kid_score: number | null;
   display_order: number | null;
   cover_photo_url: string | null;
+  cover_photo_reference: string | null;
   is_sponsored: boolean;
   family_highlight: string | null;
   lat: string;
@@ -1641,6 +1729,7 @@ export async function getPublishedPlacesByCity(cityId: string, placeType?: "come
       name: placeKidspotMeta.name,
       address: placeKidspotMeta.address,
       category: placeKidspotMeta.category,
+      place_type: placeKidspotMeta.place_type,
       kid_score: placeKidspotMeta.kid_score,
       display_order: placeKidspotMeta.display_order,
       ai_evidences: placeKidspotMeta.ai_evidences,
@@ -1657,7 +1746,12 @@ export async function getPublishedPlacesByCity(cityId: string, placeType?: "come
   const placeIds = rows.map((r) => r.place_id);
   const [allPhotos, sponsoredMap] = await Promise.all([
     db
-      .select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover })
+      .select({
+        place_id: placePhotos.place_id,
+        url: placePhotos.url,
+        photo_reference: placePhotos.photo_reference,
+        is_cover: placePhotos.is_cover,
+      })
       .from(placePhotos)
       .where(
         and(
@@ -1669,21 +1763,29 @@ export async function getPublishedPlacesByCity(cityId: string, placeType?: "come
     getActiveSponsoredPlaceIds(),
   ]);
 
-  const coverByPlace = new Map<string, string>();
+  const coverByPlace = new Map<string, { url: string | null; photo_reference: string | null }>();
   for (const p of allPhotos) {
-    if (!coverByPlace.has(p.place_id)) coverByPlace.set(p.place_id, p.url);
+    if (!coverByPlace.has(p.place_id)) {
+      coverByPlace.set(p.place_id, {
+        url: p.url,
+        photo_reference: p.photo_reference,
+      });
+    }
   }
 
   return rows.map((r) => {
     const evidences = Array.isArray(r.ai_evidences) ? (r.ai_evidences as string[]) : [];
+    const cover = coverByPlace.get(r.place_id);
     return {
       place_id: r.place_id,
       name: r.name,
       address: r.address,
       category: r.category,
+      place_type: r.place_type,
       kid_score: r.kid_score,
       display_order: r.display_order,
-      cover_photo_url: coverByPlace.get(r.place_id) ?? null,
+      cover_photo_url: cover?.url ?? null,
+      cover_photo_reference: cover?.photo_reference ?? null,
       is_sponsored: sponsoredMap.has(r.place_id),
       family_highlight: evidences[0] ?? null,
       lat: r.lat,
@@ -1732,6 +1834,27 @@ export async function addToPublished(placeId: string, cityId: string, curatedBy:
     .where(eq(placeKidspotMeta.place_id, placeId));
 }
 
+export async function bulkPublishWithOrder(
+  cityId: string,
+  places: { place_id: string; display_order: number }[],
+  curatedBy: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    for (const { place_id, display_order } of places) {
+      await tx
+        .update(placeKidspotMeta)
+        .set({
+          curation_status: "aprovado",
+          curated_by: curatedBy,
+          curated_at: new Date(),
+          display_order,
+          updated_at: new Date(),
+        })
+        .where(eq(placeKidspotMeta.place_id, place_id));
+    }
+  });
+}
+
 export type PublishedPlaceAdminRow = CuratedPlaceRow & {
   curated_at: Date | null;
   is_sponsored: boolean;
@@ -1744,6 +1867,7 @@ export async function getPublishedPlacesByCityAdmin(cityId: string): Promise<Pub
       name: placeKidspotMeta.name,
       address: placeKidspotMeta.address,
       category: placeKidspotMeta.category,
+      place_type: placeKidspotMeta.place_type,
       kid_score: placeKidspotMeta.kid_score,
       display_order: placeKidspotMeta.display_order,
       ai_evidences: placeKidspotMeta.ai_evidences,
@@ -1766,7 +1890,12 @@ export async function getPublishedPlacesByCityAdmin(cityId: string): Promise<Pub
   const placeIds = rows.map((r) => r.place_id);
   const [allPhotos, sponsoredMap] = await Promise.all([
     db
-      .select({ place_id: placePhotos.place_id, url: placePhotos.url, is_cover: placePhotos.is_cover })
+      .select({
+        place_id: placePhotos.place_id,
+        url: placePhotos.url,
+        photo_reference: placePhotos.photo_reference,
+        is_cover: placePhotos.is_cover,
+      })
       .from(placePhotos)
       .where(
         and(
@@ -1778,21 +1907,29 @@ export async function getPublishedPlacesByCityAdmin(cityId: string): Promise<Pub
     getActiveSponsoredPlaceIds(),
   ]);
 
-  const coverByPlace = new Map<string, string>();
+  const coverByPlace = new Map<string, { url: string | null; photo_reference: string | null }>();
   for (const p of allPhotos) {
-    if (!coverByPlace.has(p.place_id)) coverByPlace.set(p.place_id, p.url);
+    if (!coverByPlace.has(p.place_id)) {
+      coverByPlace.set(p.place_id, {
+        url: p.url,
+        photo_reference: p.photo_reference,
+      });
+    }
   }
 
   return rows.map((r) => {
     const evidences = Array.isArray(r.ai_evidences) ? (r.ai_evidences as string[]) : [];
+    const cover = coverByPlace.get(r.place_id);
     return {
       place_id: r.place_id,
       name: r.name,
       address: r.address,
       category: r.category,
+      place_type: r.place_type,
       kid_score: r.kid_score,
       display_order: r.display_order,
-      cover_photo_url: coverByPlace.get(r.place_id) ?? null,
+      cover_photo_url: cover?.url ?? null,
+      cover_photo_reference: cover?.photo_reference ?? null,
       is_sponsored: sponsoredMap.has(r.place_id),
       family_highlight: evidences[0] ?? null,
       lat: r.lat,
@@ -1875,4 +2012,48 @@ export async function listCityDemand(estado?: string): Promise<CityDemand[]> {
 
 export async function deleteCityDemand(id: string): Promise<void> {
   await db.delete(cityDemand).where(eq(cityDemand.id, id));
+}
+
+// --- AI Prompts by name ---
+
+export async function getAiPromptByName(name: string): Promise<AiPrompt | null> {
+  const row = await db.query.aiPrompts.findFirst({
+    where: eq(aiPrompts.name, name),
+    orderBy: (t, { desc }) => [desc(t.updated_at)],
+  });
+  return row ?? null;
+}
+
+export async function upsertAiPromptByName(name: string, promptText: string): Promise<AiPrompt> {
+  const existing = await getAiPromptByName(name);
+  if (existing) {
+    const [updated] = await db
+      .update(aiPrompts)
+      .set({ prompt: promptText, updated_at: new Date() })
+      .where(eq(aiPrompts.id, existing.id))
+      .returning();
+    return updated;
+  }
+  const [created] = await db
+    .insert(aiPrompts)
+    .values({ name, prompt: promptText, is_active: false })
+    .returning();
+  return created;
+}
+
+// --- Family summary ---
+
+export async function updatePlaceFamilySummary(placeId: string, familySummary: string): Promise<void> {
+  await db
+    .update(placeKidspotMeta)
+    .set({ family_summary: familySummary, updated_at: new Date() })
+    .where(eq(placeKidspotMeta.place_id, placeId));
+}
+
+export async function getPlaceMetaForDetails(placeId: string): Promise<{ family_summary: string | null } | null> {
+  const row = await db.query.placeKidspotMeta.findFirst({
+    where: eq(placeKidspotMeta.place_id, placeId),
+    columns: { family_summary: true },
+  });
+  return row ?? null;
 }

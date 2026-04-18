@@ -4,12 +4,14 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  FlatList,
   Pressable,
   ActivityIndicator,
   TextInput,
   Linking,
   Platform,
   Alert,
+  Dimensions,
 } from "react-native";
 import { Image } from "expo-image";
 import { useLocalSearchParams, router } from "expo-router";
@@ -25,7 +27,10 @@ import {
   toggleFavorite,
   getBestType,
   getPhotoUrl,
+  fetchPlacePhotos,
+  resolvePhotoUrl,
   type PlaceDetails,
+  type PlacePhoto,
   type Review,
   type KidFlags,
 } from "@/lib/api";
@@ -169,6 +174,12 @@ export default function PlaceDetailsScreen() {
     enabled: !!place_id,
   });
 
+  const { data: dbPhotos } = useQuery<PlacePhoto[]>({
+    queryKey: ["/api/places/photos", place_id],
+    queryFn: () => fetchPlacePhotos(place_id!),
+    enabled: !!place_id,
+  });
+
   const { data: favorites } = useQuery({
     queryKey: ["/api/favorites"],
     queryFn: getFavorites,
@@ -275,15 +286,24 @@ export default function PlaceDetailsScreen() {
     );
   }
 
-  const mainPhoto =
-    place.photos && place.photos.length > 0
-      ? getPhotoUrl(place.photos[0].photo_reference, 800)
-      : null;
-  const extraPhotos =
-    place.photos && place.photos.length > 1
-      ? place.photos.slice(1, 3).map((p) => getPhotoUrl(p.photo_reference, 600))
-      : [];
   const category = getBestType(place.types);
+
+  const screenWidth = Dimensions.get("window").width;
+
+  const sortedDbPhotos = dbPhotos
+    ? [...dbPhotos].sort((a, b) => (b.is_cover ? 1 : 0) - (a.is_cover ? 1 : 0) || a.order - b.order)
+    : [];
+
+  const googlePhotos = (place.photos ?? [])
+    .filter((p) => !!p.photo_reference)
+    .slice(0, Math.max(0, 8 - sortedDbPhotos.length));
+
+  const galleryPhotos: string[] = [
+    ...sortedDbPhotos.map((p) => resolvePhotoUrl(p, 800)),
+    ...googlePhotos.map((p) => getPhotoUrl(p.photo_reference!, 800)),
+  ];
+
+  const kidsAreaPhotos = sortedDbPhotos.filter((p) => p.is_kids_area).slice(0, 2);
 
   const avgRating =
     reviews && reviews.length > 0
@@ -297,11 +317,20 @@ export default function PlaceDetailsScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.heroContainer}>
-        {mainPhoto ? (
-          <Image
-            source={{ uri: mainPhoto }}
-            style={styles.heroPhoto}
-            contentFit="cover"
+        {galleryPhotos.length > 0 ? (
+          <FlatList
+            data={galleryPhotos}
+            keyExtractor={(_, i) => String(i)}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            renderItem={({ item }) => (
+              <Image
+                source={{ uri: item }}
+                style={[styles.heroPhoto, { width: screenWidth }]}
+                contentFit="cover"
+              />
+            )}
           />
         ) : (
           <View style={[styles.heroPhoto, styles.heroPlaceholder]}>
@@ -379,16 +408,29 @@ export default function PlaceDetailsScreen() {
           )}
         </View>
 
-        {extraPhotos.length > 0 && (
-          <View style={styles.photoGallery}>
-            {extraPhotos.map((uri, i) => (
-              <Image
-                key={i}
-                source={{ uri }}
-                style={styles.galleryPhoto}
-                contentFit="cover"
-              />
-            ))}
+        {place.family_summary ? (
+          <View style={summaryStyles.card}>
+            <Text style={summaryStyles.title}>Por que é indicado para famílias</Text>
+            <Text style={summaryStyles.body}>{place.family_summary}</Text>
+          </View>
+        ) : null}
+
+        {kidsAreaPhotos.length > 0 && (
+          <View style={styles.kidsAreaSection}>
+            <View style={styles.kidsAreaHeader}>
+              <Ionicons name="happy-outline" size={16} color="#059669" />
+              <Text style={styles.kidsAreaTitle}>Área Kids</Text>
+            </View>
+            <View style={styles.kidsAreaRow}>
+              {kidsAreaPhotos.map((p) => (
+                <Image
+                  key={p.id}
+                  source={{ uri: resolvePhotoUrl(p, 600) }}
+                  style={styles.kidsAreaPhoto}
+                  contentFit="cover"
+                />
+              ))}
+            </View>
           </View>
         )}
 
@@ -530,6 +572,31 @@ export default function PlaceDetailsScreen() {
   );
 }
 
+const summaryStyles = StyleSheet.create({
+  card: {
+    backgroundColor: "#E8F5E9",
+    borderLeftWidth: 3,
+    borderLeftColor: "#059669",
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#059669",
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  body: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "#1a3c2e",
+    lineHeight: 21,
+  },
+});
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -656,12 +723,25 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontFamily: "Inter_500Medium",
   },
-  photoGallery: {
+  kidsAreaSection: {
+    gap: 8,
+  },
+  kidsAreaHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  kidsAreaTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#059669",
+    fontFamily: "Inter_600SemiBold",
+  },
+  kidsAreaRow: {
     flexDirection: "row",
     gap: 8,
-    marginTop: 4,
   },
-  galleryPhoto: {
+  kidsAreaPhoto: {
     flex: 1,
     height: 120,
     borderRadius: 12,

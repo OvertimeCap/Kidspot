@@ -8,7 +8,12 @@ export type MinimalPlace = {
   types: string[];
   rating?: number;
   user_ratings_total?: number;
-  photos?: { photo_reference: string }[];
+  photos?: PlaceImage[];
+};
+
+export type PlaceImage = {
+  photo_reference?: string | null;
+  url?: string | null;
 };
 
 export type PlaceDetails = MinimalPlace & {
@@ -16,6 +21,7 @@ export type PlaceDetails = MinimalPlace & {
   website?: string;
   formatted_phone_number?: string;
   is_sponsored?: boolean;
+  family_summary?: string | null;
 };
 
 export type KidFlags = {
@@ -90,12 +96,15 @@ export type PlaceWithScore = {
   user_ratings_total?: number;
   types: string[];
   opening_hours?: { open_now?: boolean; weekday_text?: string[] };
-  photos?: { photo_reference: string }[];
+  photos?: PlaceImage[];
   kid_score: number;
   kid_score_breakdown: KidScoreBreakdown;
   distance_meters?: number;
   family_highlight?: string;
   is_sponsored?: boolean;
+  category_label?: string;
+  place_type?: "comer" | "parques";
+  display_order?: number | null;
 };
 
 export function getPhotoUrl(photoReference: string, maxwidth = 400): string {
@@ -106,10 +115,49 @@ export function getPhotoUrl(photoReference: string, maxwidth = 400): string {
   return url.toString();
 }
 
+export function resolvePlaceImageUrl(
+  photo: PlaceImage | null | undefined,
+  maxwidth = 400,
+): string | null {
+  if (!photo) return null;
+  if (photo.photo_reference) {
+    return getPhotoUrl(photo.photo_reference, maxwidth);
+  }
+  return photo.url ?? null;
+}
+
 export async function searchPlaces(params: SearchParams): Promise<PlaceWithScore[]> {
   const res = await apiRequest("POST", "/api/places/search", params);
   const data = await res.json();
   return data.places ?? [];
+}
+
+export type CuratedSearchParams = {
+  latitude: number;
+  longitude: number;
+  radius?: number;
+  bounds?: {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  };
+};
+
+export async function searchCuratedPlaces(
+  params: CuratedSearchParams,
+): Promise<{
+  places: PlaceWithScore[];
+  city_id: string | null;
+  city_name: string | null;
+}> {
+  const res = await apiRequest("POST", "/api/cities/places/search", params);
+  const data = await res.json();
+  return {
+    places: data.places ?? [],
+    city_id: data.city_id ?? null,
+    city_name: data.city_name ?? null,
+  };
 }
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
@@ -276,6 +324,66 @@ export async function createStory(photos: string[]): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Partner — Place Photos                                              */
+/* ------------------------------------------------------------------ */
+
+export type PlacePhoto = {
+  id: string;
+  place_id: string;
+  url: string;
+  photo_reference: string | null;
+  is_cover: boolean;
+  is_kids_area: boolean;
+  order: number;
+  deleted: boolean;
+  created_at: string;
+};
+
+export function resolvePhotoUrl(
+  photo: { url: string; photo_reference: string | null },
+  maxwidth = 400,
+): string {
+  if (photo.photo_reference) {
+    return getPhotoUrl(photo.photo_reference, maxwidth);
+  }
+  return photo.url;
+}
+
+export async function fetchPlacePhotos(placeId: string): Promise<PlacePhoto[]> {
+  const res = await apiRequest("GET", `/api/places/${encodeURIComponent(placeId)}/photos`);
+  const data = await res.json();
+  return data.photos ?? [];
+}
+
+export async function fetchPartnerPhotos(placeId: string): Promise<PlacePhoto[]> {
+  const res = await apiRequest("GET", `/api/partner/places/${encodeURIComponent(placeId)}/photos`);
+  const data = await res.json();
+  return data.photos ?? [];
+}
+
+export async function uploadPartnerPhoto(placeId: string, photoDataUri: string): Promise<PlacePhoto> {
+  const res = await apiRequest("POST", `/api/partner/places/${encodeURIComponent(placeId)}/photos`, {
+    photo_data: photoDataUri,
+  });
+  const data = await res.json();
+  return data.photo;
+}
+
+export async function setPartnerPhotoCover(photoId: string): Promise<void> {
+  await apiRequest("PATCH", `/api/partner/photos/${encodeURIComponent(photoId)}/cover`, {});
+}
+
+export async function setPartnerPhotoKidsArea(photoId: string, isKidsArea: boolean): Promise<void> {
+  await apiRequest("PATCH", `/api/partner/photos/${encodeURIComponent(photoId)}/kids-area`, {
+    is_kids_area: isKidsArea,
+  });
+}
+
+export async function deletePartnerPhoto(photoId: string): Promise<void> {
+  await apiRequest("DELETE", `/api/partner/photos/${encodeURIComponent(photoId)}`);
+}
+
+/* ------------------------------------------------------------------ */
 /* City-based curated places (Feature #23)                             */
 /* ------------------------------------------------------------------ */
 
@@ -291,9 +399,11 @@ export type CuratedPlace = {
   name: string | null;
   address: string | null;
   category: string | null;
+  place_type: "comer" | "parques" | null;
   kid_score: number | null;
   display_order: number | null;
   cover_photo_url: string | null;
+  cover_photo_reference: string | null;
   is_sponsored: boolean;
   family_highlight: string | null;
   lat: string;

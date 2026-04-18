@@ -1,9 +1,9 @@
 import { db } from "./db";
-import { cities, pipelineRuns, placesKidspot, pipelineBlacklist } from "@shared/schema";
+import { cities, pipelineRuns, placesKidspot, pipelineBlacklist, customCriteria } from "@shared/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { searchPlacesByText, type MinimalPlace } from "./google-places";
 import { applyKidFilters } from "./kid-score";
-import { upsertPlaceMeta } from "./storage";
+import { upsertPlaceMeta, addPlacePhoto } from "./storage";
 
 export type PipelineRunResult = {
   run_id: string;
@@ -63,7 +63,16 @@ async function ingestCity(cityId: string, cityName: string, lat: number, lng: nu
             lng: String(place.location?.lng ?? 0),
             status: "pendente",
           });
-          await upsertPlaceMeta({ place_id: place.place_id, city: cityName });
+          await upsertPlaceMeta({
+            place_id: place.place_id,
+            city: cityName,
+            name: place.name,
+            address: place.formatted_address,
+          });
+          if (place.photos?.[0]?.photo_reference) {
+            const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${encodeURIComponent(place.photos[0].photo_reference)}&key=${process.env.GOOGLE_PLACES_API_KEY || ""}`;
+            await addPlacePhoto({ place_id: place.place_id, url: photoUrl, photo_reference: place.photos[0].photo_reference, order: 0 });
+          }
           newPending++;
         }
       } catch {
@@ -225,13 +234,21 @@ export type CriteriaPlace = PreviewPlace & {
 export async function aiSearchForCity(
   cityId: string,
   limit = 50,
+  options: { provider?: string; model?: string; prompt?: string } = {},
 ): Promise<{ city_name: string; places: MinimalPlace[] }> {
   const city = await db.query.cities.findFirst({
     where: and(eq(cities.id, cityId), eq(cities.ativa, true)),
   });
   if (!city) throw new Error("Cidade não encontrada ou não está ativa");
 
-  const rawPlaces = await searchPlacesByText(city.nome);
+  const cityLat = city.latitude ? Number(city.latitude) : undefined;
+  const cityLng = city.longitude ? Number(city.longitude) : undefined;
+  const rawPlaces = await searchPlacesByText(
+    city.nome,
+    options.prompt || undefined,
+    cityLat,
+    cityLng,
+  );
   const limited = rawPlaces.slice(0, limit);
 
   await db.update(cities).set({ ultima_varredura: new Date() }).where(eq(cities.id, cityId));
@@ -246,26 +263,26 @@ export async function aiSearchForCity(
       rating: p.rating,
       user_ratings_total: p.user_ratings_total,
       location: p.location,
+      photos: p.photos,
     })),
   };
 }
 
 /**
- * Step 2 of the 3-step pipeline: apply kid-friendly criteria and blacklist
+ * Step 2 of the 3-step pipeline: apply blacklist and active custom criteria
  * to the raw places returned by aiSearchForCity.
  */
 export async function applyCriteriaToPlaces(
   cityId: string,
   rawPlaces: MinimalPlace[],
-): Promise<{ places: CriteriaPlace[] }> {
-  const blacklisted = await db
-    .select({ place_id: pipelineBlacklist.place_id })
-    .from(pipelineBlacklist);
+): Promise<{ places: CriteriaPlace[]; active_criteria: { key: string; label: string }[] }> {
+  const [blacklisted, activeCriteriaRows] = await Promise.all([
+    db.select({ place_id: pipelineBlacklist.place_id }).from(pipelineBlacklist),
+    db.select({ key: customCriteria.key, label: customCriteria.label })
+      .from(customCriteria)
+      .where(eq(customCriteria.is_active, true)),
+  ]);
   const blacklistSet = new Set(blacklisted.map((b) => b.place_id));
-
-  const withTypes = rawPlaces.map((p) => ({ ...p, types: p.types ?? [], name: p.name ?? "" }));
-  const filtered = applyKidFilters(withTypes);
-  const filteredSet = new Set(filtered.map((p) => p.place_id));
 
   const placeIds = rawPlaces.map((p) => p.place_id);
   const existingRows = placeIds.length > 0
@@ -279,11 +296,8 @@ export async function applyCriteriaToPlaces(
   return {
     places: rawPlaces.map((p) => {
       const isBlacklisted = blacklistSet.has(p.place_id);
-      const passedFilters = filteredSet.has(p.place_id);
-      const passed = passedFilters && !isBlacklisted;
-      let rejection_reason: string | undefined;
-      if (isBlacklisted) rejection_reason = "Na blacklist";
-      else if (!passedFilters) rejection_reason = "Não atende critérios kid-friendly";
+      const passed = !isBlacklisted;
+      const rejection_reason = isBlacklisted ? "Na blacklist" : undefined;
 
       return {
         place_id: p.place_id,
@@ -298,6 +312,7 @@ export async function applyCriteriaToPlaces(
         rejection_reason,
       };
     }),
+    active_criteria: activeCriteriaRows,
   };
 }
 

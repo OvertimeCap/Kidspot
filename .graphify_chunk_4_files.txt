@@ -1,0 +1,11 @@
+server\routes\reviews.ts
+server\routes\sponsorship.ts
+server\routes\stories.ts
+shared\schema.ts
+lib\api.ts
+lib\auth-context.tsx
+lib\map-utils.ts
+lib\picked-location-context.tsx
+lib\query-client.ts
+lib\use-home-search.ts
+docs\API.md

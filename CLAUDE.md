@@ -1,75 +1,45 @@
-# CLAUDE.md
+# CLAUDE.md - KidSpot Dev Guide (Otimizado)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**Projeto**: App mobile Expo/React Native + Express/TS + PostgreSQL/Drizzle para locais kid-friendly.
 
-## Project Overview
+## Comandos Dev
+npm run server:dev # Backend
+npm run expo:dev # Frontend (Replit env para proxy)
+npm run db:push # Schema
+npm run lint # Lint/fix
+npm run expo:static # Build mobile
+npm run server:prod # Build/prod server
 
-KidSpot is a full-stack mobile application for discovering kid-friendly locations. It uses **Expo/React Native** (frontend) + **Express.js** (backend) + **PostgreSQL/Drizzle ORM** (database), all in TypeScript.
+text
 
-## Development Commands
+## Arquitetura Essencial
+**Frontend**: Expo Router (app/tabs/), TanStack Query, AuthProvider (JWT AsyncStorage), admin/ screens.
+**Backend**: server/index.ts (setup), server/routes*.ts (100+ endpoints <300ln), server/storage.ts (Drizzle repo), server/auth.ts (JWT mobile 7d/backoffice 2h).
+**DB**: shared/schema.ts (users, placeskidspot, cities, pipelineruns).
+**AI Pipeline**: Multi-provider (OpenAI/Anthropic/etc., keys AES), KidScore (flags + review sentiment).
+**Externals**: Google Places, Foursquare cache 7d, Neon DB.
 
-```bash
-# Start backend in development mode
-npm run server:dev
+## Convenções Chave
+- Rotas: Zod/drizzle-zod validação; storage layer (no DB direto em routes).
+- Auth: requireAuth/Role; mobile vs backoffice separados.
+- Novas features: server/routes[feature].ts (<300ln), monte em index.ts.
+- Lint zero erros; npm run lint pré-fim tarefa.
 
-# Start Expo frontend (requires Replit env vars for proxy URLs)
-npm run expo:dev
+## Security Checklist (Auto-review)
+- JWT em toda rota protegida.
+- Zod em body/query/params.
+- process.env para secrets.
+- No hardcode.
 
-# Push schema changes to the database
-npm run db:push
+## Orquestração
+**Tarefas Simples**: Sessão única.
+**Complexas** (>3 files, auth/DB/routes/admin): Agent Team.
+**Roles**:
+1. **Team Lead**: Plano aprovado → "PLANO APROVADO".
+2. **Dev**: Implementa modular (no expand routes.ts).
+3. **QA Código**: Lint, types, regressions.
+4. **Browser QA**: Playwright (.mcp.json), leia TESTING_MAP.md.
 
-# Lint
-npm run lint
-npm run lint:fix
+**Human só em**: Plano pronto, impl validada, blocker real.
 
-# Production build & run
-npm run expo:static:build   # builds Expo static bundle
-npm run server:build        # bundles Express server with esbuild
-npm run server:prod         # runs the production server
-```
-
-There is no test suite configured.
-
-## Architecture
-
-### Frontend (`app/`, `components/`, `lib/`)
-- **Expo Router** file-based navigation. Tabs live in `app/(tabs)/`. Dynamic routes like `app/place/[place_id].tsx`.
-- **TanStack React Query v5** for all server state (fetching, caching, mutations).
-- **AuthProvider** (`lib/auth-context.tsx`) manages JWT tokens stored in AsyncStorage. Wrap all authenticated screens with this context.
-- Path alias `@/*` maps to the project root; `@shared/*` maps to `shared/`.
-- Admin screens are in `app/admin-*.tsx` and require the mobile `admin` role.
-
-### Backend (`server/`)
-- `server/index.ts` — Express setup, CORS config, middleware chain, mounts all routes, serves static files and the backoffice admin panel at `/admin`.
-- `server/routes.ts` — All ~100+ API endpoints in one file (~2900 lines). Split logically by feature but not into separate files.
-- `server/storage.ts` — Repository layer. All Drizzle ORM database queries go here; routes call storage functions, never query the DB directly.
-- `server/auth.ts` — JWT middleware: `requireAuth`, `requireBackofficeAuth`, `requireRole(...)`, `optionalAuth`.
-
-### Database (`shared/schema.ts`, `migrations/`)
-- Single schema file defines all Drizzle tables. Run `npm run db:push` to apply changes.
-- Key tables: `users` (mobile), `backoffice_users` (admin panel), `places_kidspot`, `cities`, `reviews`, `favorites`, `enrichment_cache`, `pipeline_runs`, `kid_flags`.
-
-### Two Auth Systems
-- **Mobile users** (`users` table): roles `admin`, `colaborador`, `parceiro`, `estabelecimento`, `usuario`. JWT with 7-day expiry.
-- **Backoffice users** (`backoffice_users` table): roles `super_admin`, `admin`, `curador`, `analista`. Separate JWT with 2-hour expiry. Accessed via `/admin` web panel.
-
-### AI & Pipeline (`server/pipeline.ts`, `server/ai-review-analysis.ts`)
-- **AI Provider Hub**: multi-provider support (OpenAI, Anthropic, Perplexity, Gemini). Keys stored AES-256-GCM encrypted. Configured via backoffice admin panel; admins select provider/model per pipeline stage with fallback chains.
-- **Pipeline**: automated city scanning — queries Google Places for kid-friendly locations, inserts them as `pendente`, logs metrics to `pipeline_runs`.
-- `server/kid-score.ts` — KidScore algorithm: multi-layer scoring from place type, community flags (`espaco_kids`, `trocador`, `cadeirao`, etc.), ratings, and AI-analyzed review sentiment.
-
-### Place Workflow
-Places follow: `pendente` → `aprovado` / `rejeitado`. Only `aprovado` places appear in mobile search results.
-
-### External APIs
-- **Google Places**: primary place data (name, address, photos, reviews).
-- **Foursquare**: enrichment (ratings, popularity) — results cached 7 days in `enrichment_cache`.
-- **OpenAI** (via AI Provider Hub): NLP analysis of reviews for family-friendly signals — also cached 7 days.
-
-## Key Conventions
-
-- When adding new API routes, add the endpoint to `server/routes.ts` and the database logic to `server/storage.ts`.
-- Use Zod (`zod` + `drizzle-zod`) for request validation at route boundaries.
-- Frontend API calls use the helpers in `lib/api.ts`. Keep them there.
-- The `replit.md` file contains architecture documentation; update it when making significant structural changes.
-- Ask for confirmation before adding new external dependencies or making major structural changes.
+**Precedência**: AGENTS.md > este arquivo.

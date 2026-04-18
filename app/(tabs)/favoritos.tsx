@@ -19,7 +19,7 @@ import {
   getPlaceDetails,
   toggleFavorite,
   getBestType,
-  getPhotoUrl,
+  resolvePlaceImageUrl,
   type PlaceDetails,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -48,7 +48,7 @@ function FavoriteCard({
 
   const photoUrl =
     place.photos && place.photos.length > 0
-      ? getPhotoUrl(place.photos[0].photo_reference, 600)
+      ? resolvePlaceImageUrl(place.photos[0], 600)
       : null;
 
   const category = getBestType(place.types);
